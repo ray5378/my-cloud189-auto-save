@@ -398,7 +398,7 @@ AppDataSource.initialize().then(async () => {
     app.post('/api/tasks/:id/manual-tmdb', async (req, res) => {
         try {
             const taskId = parseInt(req.params.id);
-            const { tmdbId, videoType, title } = req.body;
+            const { tmdbId, videoType, title, manualSeason } = req.body;
             if (!tmdbId || !videoType) throw new Error('参数缺失');
             const task = await taskRepo.findOneBy({ id: taskId });
             if (!task) throw new Error('任务不存在');
@@ -406,6 +406,10 @@ AppDataSource.initialize().then(async () => {
             task.tmdbId = tmdbId;
             task.videoType = videoType;
             if (title) task.tmdbTitle = title;
+            // 如果用户填写了具体的季数进行覆盖，则保存，否则置空
+            task.manualSeason = manualSeason !== '' && !isNaN(parseInt(manualSeason)) 
+                ? parseInt(manualSeason) 
+                : null;
             task.manualTmdbBound = true;
             await taskRepo.save(task);
 

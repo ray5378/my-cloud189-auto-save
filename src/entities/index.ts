@@ -187,6 +187,9 @@ export class Task {
     @Column('boolean', { nullable: true, default: false })
     manualTmdbBound!: boolean; // 指示该任务及其关联文件的 TMDB 和类型是经过人工强制指定的
     
+    @Column('integer', { nullable: true })
+    manualSeason!: number; // 手动强制指定的季数
+    
     @Column({ nullable: true })
     enableTaskScraper!: boolean; // 是否启用刮削
 

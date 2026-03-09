@@ -588,7 +588,7 @@ async function showAIRenameOptions() {
 
     const tmdbInfoHtml = chooseTask.manualTmdbBound && chooseTask.tmdbId 
         ? `<div style="margin-bottom: 15px; padding: 10px; background: #e6f7ff; border: 1px solid #91d5ff; border-radius: 4px; color: #1890ff;">
-             <span><i class="fas fa-info-circle"></i> 当前任务已被手动指定为 <b>TMDB ID: ${chooseTask.tmdbId} ${chooseTask.tmdbTitle ? '(' + chooseTask.tmdbTitle + ')' : ''}</b></span>
+             <span><i class="fas fa-info-circle"></i> 当前任务已被手动指定为 <b>TMDB ID: ${chooseTask.tmdbId} ${chooseTask.tmdbTitle ? '(' + chooseTask.tmdbTitle + ')' : ''}</b>${chooseTask.manualSeason != null ? ' &nbsp;<b>强制第 ' + chooseTask.manualSeason + ' 季</b>' : ''}</span>
            </div>`
         : '';
 
@@ -752,6 +752,7 @@ function closeManualTmdbModal() {
     document.getElementById('manualTmdbModal').style.display = 'none';
     document.getElementById('tmdbSearchQuery').value = '';
     document.getElementById('tmdbSearchResults').innerHTML = '';
+    document.getElementById('tmdbManualSeason').value = '';
 }
 
 // 2. 搜索 TMDB
@@ -801,7 +802,13 @@ async function bindTmdbToTasks(tmdbId, videoType, title) {
         return;
     }
 
-    if (!confirm(`确定要将任务 [${chooseTask.resourceName}] 强制绑定为 "${title}" 吗？\n绑定后其后续处理及历史文件将无视默认规则，优先使用此名称。`)) {
+    const manualSeasonVal = document.getElementById('tmdbManualSeason').value;
+    const manualSeason = manualSeasonVal !== '' && !isNaN(parseInt(manualSeasonVal)) ? parseInt(manualSeasonVal) : null;
+    const confirmMsg = manualSeason 
+        ? `确定要将任务 [${chooseTask.resourceName}] 绑定为 "${title}" 第${manualSeason}季 吗？\n绑定后将强制为第 ${manualSeason} 季命名。`
+        : `确定要将任务 [${chooseTask.resourceName}] 强制绑定为 "${title}" 吗？\n绑定后其后续处理及历史文件将无视默认规则，优先使用此名称。`;
+
+    if (!confirm(confirmMsg)) {
         return;
     }
 
@@ -811,14 +818,15 @@ async function bindTmdbToTasks(tmdbId, videoType, title) {
         const resp = await fetch(`/api/tasks/${taskId}/manual-tmdb`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tmdbId, videoType, title })
+            body: JSON.stringify({ tmdbId, videoType, title, manualSeason })
         });
         const data = await resp.json();
         if (data.success) {
             // 绑定完成后，立即自动触发一次AI重命名和后台任务执行
             await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' });
             loading.hide();
-            message.success(`成功绑定！系统已触发重新更新。`);
+            const successMsg = manualSeason ? `成功绑定！并强制设定为第 ${manualSeason} 季。系统已触发重新更新。` : `成功绑定！系统已触发重新更新。`;
+            message.success(successMsg);
             closeManualTmdbModal();
             fetchTasks(); // 刷新表格
             
@@ -827,6 +835,7 @@ async function bindTmdbToTasks(tmdbId, videoType, title) {
             chooseTask.videoType = videoType;
             chooseTask.tmdbTitle = title;
             chooseTask.manualTmdbBound = true;
+            chooseTask.manualSeason = manualSeason;
         } else {
             loading.hide();
             message.warning('绑定失败: ' + data.error);

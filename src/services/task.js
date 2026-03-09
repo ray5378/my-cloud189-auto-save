@@ -911,19 +911,24 @@ class TaskService {
     }
 
     // 根据AI分析结果生成新文件名
-    _generateFileName(file, aiFile, resourceInfo, template) {
+    _generateFileName(file, aiFile, resourceInfo, template, task) {
         if (!aiFile) return file.name;
         
+        // 强制季数覆盖（如果用户手动指定了此任务的季数）
+        const effectiveSeasonStr = (task && task.manualSeason != null) 
+            ? task.manualSeason.toString() 
+            : aiFile.season;
+            
         // 构建文件名替换映射
         const replaceMap = {
             '{name}': aiFile.name || resourceInfo.name,
             '{year}': resourceInfo.year || '',
-            '{s}': aiFile.season?.padStart(2, '0') || '01',
+            '{s}': effectiveSeasonStr?.padStart(2, '0') || '01',
             '{e}': aiFile.episode?.padStart(2, '0') || '01',
-            '{sn}': parseInt(aiFile.season) || '1',                    // 不补零的季数
+            '{sn}': parseInt(effectiveSeasonStr) || '1',                    // 不补零的季数
             '{en}': parseInt(aiFile.episode) || '1',                   // 不补零的集数
             '{ext}': aiFile.extension || path.extname(file.name),
-            '{se}': `S${aiFile.season?.padStart(2, '0') || '01'}E${aiFile.episode?.padStart(2, '0') || '01'}`
+            '{se}': `S${effectiveSeasonStr?.padStart(2, '0') || '01'}E${aiFile.episode?.padStart(2, '0') || '01'}`
         };
 
         // 替换模板中的占位符
@@ -949,7 +954,7 @@ class TaskService {
                     newFiles.push(file);
                     continue;
                 }
-                const newName = this._generateFileName(file, aiFile, resourceInfo, template);
+                const newName = this._generateFileName(file, aiFile, resourceInfo, template, task);
                 // 判断文件名是否已存在
                 if (file.name === newName) {
                     newFiles.push(file);
