@@ -315,6 +315,7 @@ async function showFileListModal(taskId) {
             <div class='modal-body'>
                 <button class="batch-rename-btn" onclick="showBatchRenameOptions()">批量重命名</button>
                 <button class="ai-rename-btn" onclick="showAIRenameOptions()">AI重命名</button>
+                <button class="manual-tmdb-btn btn-warning" onclick="openManualTmdbModal()" style="margin-left: 4px;">指定TMDB</button>
                 <button class="delete-files-btn btn-danger" onclick="deleteTaskFiles()">批量删除</button>
                 <div class='form-body'>
                 <table>
@@ -724,17 +725,16 @@ function toggleTheme() {
 
 // 1. 打开弹窗
 function openManualTmdbModal() {
-    const selectedTasks = document.querySelectorAll('#taskTable tbody tr.selected');
-    if (selectedTasks.length === 0) {
-        message.warning('请先勾选需要指定 TMDB 的任务');
+    if (!chooseTask) {
+        message.warning('无法获取当前任务，请重新打文件列表弹窗');
         return;
     }
-    // 默认回填第一个选中任务的文件名称(如果可以获取的话) 到搜索框中
-    const firstTaskName = selectedTasks[0].getAttribute('data-name');
-    if (firstTaskName) {
+    // 回填任务名称到搜索框中
+    const taskName = chooseTask.resourceName;
+    if (taskName) {
         // 尝试剥离年份等
-        const yearMatch = firstTaskName.match(/(.+?)\s*\(?(\d{4})\)?\s*$/);
-        document.getElementById('tmdbSearchQuery').value = yearMatch ? yearMatch[1] : firstTaskName;
+        const yearMatch = taskName.match(/(.+?)\s*\(?(\d{4})\)?\s*$/);
+        document.getElementById('tmdbSearchQuery').value = yearMatch ? yearMatch[1] : taskName;
     }
     document.getElementById('tmdbSearchResults').innerHTML = '';
     document.getElementById('manualTmdbModal').style.display = 'block';
@@ -788,38 +788,38 @@ async function searchTmdb() {
 
 // 3. 绑定并触发重新执行
 async function bindTmdbToTasks(tmdbId, videoType, title) {
-    const selectedTasks = document.querySelectorAll('#taskTable tbody tr.selected');
-    const taskIds = Array.from(selectedTasks).map(row => row.getAttribute('data-task-id'));
-
-    if (taskIds.length === 0) {
-        message.warning('请先勾选需要指定的任务!');
+    if (!chooseTask) {
+        message.warning('当前未能获取到对应的任务记录!');
         return;
     }
 
-    if (!confirm(`确定要将这 ${taskIds.length} 个任务强制绑定为 "${title}" 吗？\n绑定后其后续处理及历史文件将无视默认规则，优先使用此名称。`)) {
+    if (!confirm(`确定要将任务 [${chooseTask.resourceName}] 强制绑定为 "${title}" 吗？\n绑定后将能正确进行智能重命名并覆盖报错信息。`)) {
         return;
     }
 
     loading.show();
-    let successCount = 0;
     try {
-        for (const taskId of taskIds) {
-            const resp = await fetch(`/api/tasks/${taskId}/manual-tmdb`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tmdbId, videoType })
-            });
-            const data = await resp.json();
-            if (data.success) {
-                // 绑定完成后，立即自动触发一次任务执行，便于修正积压的文件
-                await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' });
-                successCount++;
-            }
+        const taskId = chooseTask.id;
+        const resp = await fetch(`/api/tasks/${taskId}/manual-tmdb`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tmdbId, videoType })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            // 绑定完成后，立即自动触发一次AI重命名和后台任务执行
+            await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' });
+            loading.hide();
+            message.success(`成功绑定！系统已经在后台重新执行剧集刷新及 AI 重命名。`);
+            closeManualTmdbModal();
+            fetchTasks(); // 刷新表格
+            
+            // 可选：如果不强行关闭文件列表并希望自动刷新的话，取消下面注释
+            // closeFileListModal(); 
+        } else {
+            loading.hide();
+            message.warning('绑定失败: ' + data.error);
         }
-        loading.hide();
-        message.success(`成功绑定 ${successCount}/${taskIds.length} 个任务，并已在后台触发执行更新。`);
-        closeManualTmdbModal();
-        fetchTasks();
     } catch (error) {
         loading.hide();
         message.warning('绑定过程中发生错误: ' + error.message);

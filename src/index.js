@@ -786,7 +786,8 @@ AppDataSource.initialize().then(async () => {
             const resourceInfo = await taskService._analyzeResourceInfo(
                 task.resourceName,
                 files,
-                'file'
+                'file',
+                task
             )
             return res.json({ success: true, data: await taskService.handleAiRename(files, resourceInfo) });
         } catch (error) {
