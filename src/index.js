@@ -664,8 +664,7 @@ AppDataSource.initialize().then(async () => {
             }
             if (folderId == -11) {
                 // 返回顶级目录
-                res.json({success: true, data: [{id: task.shareFileId, name: task.resourceName}]});
-                return 
+                return res.json({success: true, data: [{id: task.shareFileId, name: task.resourceName}]});
             }
             const account = await accountRepo.findOneBy({ id: req.params.accountId });
             if (!account) {
@@ -675,7 +674,7 @@ AppDataSource.initialize().then(async () => {
             // 查询分享目录
             const shareDir = await cloud189.listShareDir(task.shareId, req.query.folderId, task.shareMode);
             if (!shareDir || !shareDir.fileListAO) {
-                res.json({ success: true, data: [] });    
+                return res.json({ success: true, data: [] });
             }
             const folders = shareDir.fileListAO.folderList;
             folderCache.set(cacheKey, folders);
@@ -687,20 +686,20 @@ AppDataSource.initialize().then(async () => {
 
      // 获取目录下的文件
      app.get('/api/folder/files', async (req, res) => {
-        const { accountId, taskId } = req.query;
-        const account = await accountRepo.findOneBy({ id: accountId });
-        if (!account) {
-            throw new Error('账号不存在');
-        }
-        const task = await taskRepo.findOneBy({ id: taskId });
-        if (!task) {
-            throw new Error('任务不存在');
-        }
-        const cloud189 = Cloud189Service.getInstance(account);
         try {
-            const fileList =  await taskService.getAllFolderFiles(cloud189, task);    
+            const { accountId, taskId } = req.query;
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) {
+                throw new Error('账号不存在');
+            }
+            const task = await taskRepo.findOneBy({ id: taskId });
+            if (!task) {
+                throw new Error('任务不存在');
+            }
+            const cloud189 = Cloud189Service.getInstance(account);
+            const fileList = await taskService.getAllFolderFiles(cloud189, task);
             res.json({ success: true, data: fileList });
-        }catch (error) {
+        } catch (error) {
             res.status(500).json({ success: false, error: error.message });
         }
     });
