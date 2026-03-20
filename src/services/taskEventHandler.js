@@ -66,23 +66,22 @@ class TaskEventHandler {
         return fileList.some(file => this._extractEpisodeInfo(file.name));
     }
 
-    async _handleLatestSavedDisplay(taskCompleteEventDto) {
-        const { task, taskRepo } = taskCompleteEventDto;
-        const finalFiles = (taskCompleteEventDto.fileList || []).filter(file => !file.isFolder);
-        if (finalFiles.length === 0 || !taskRepo) {
-            return;
+    buildLatestSavedDisplay(task, allFiles = []) {
+        const mediaFiles = (allFiles || []).filter(file => !file.isFolder);
+        if (mediaFiles.length === 0) {
+            return {
+                lastSavedFileName: null,
+                lastSavedDisplayText: null,
+                missingEpisodes: null
+            };
         }
 
-        const latestFile = finalFiles[finalFiles.length - 1];
+        const latestFile = mediaFiles[mediaFiles.length - 1];
         let lastSavedDisplayText = latestFile.name;
         let missingEpisodes = null;
 
-        if (this._isSeriesTask(task, finalFiles)) {
-            const allFiles = [
-                ...((taskCompleteEventDto.existingFiles || []).filter(file => !file.isFolder)),
-                ...finalFiles
-            ];
-            const episodeInfos = allFiles
+        if (this._isSeriesTask(task, mediaFiles)) {
+            const episodeInfos = mediaFiles
                 .map(file => ({ file, episodeInfo: this._extractEpisodeInfo(file.name) }))
                 .filter(item => item.episodeInfo && Number.isInteger(item.episodeInfo.episode));
 
@@ -114,9 +113,27 @@ class TaskEventHandler {
             }
         }
 
-        task.lastSavedFileName = latestFile.name;
-        task.lastSavedDisplayText = lastSavedDisplayText;
-        task.missingEpisodes = missingEpisodes;
+        return {
+            lastSavedFileName: latestFile.name,
+            lastSavedDisplayText,
+            missingEpisodes
+        };
+    }
+
+    async _handleLatestSavedDisplay(taskCompleteEventDto) {
+        const { task, taskRepo } = taskCompleteEventDto;
+        const finalFiles = (taskCompleteEventDto.fileList || []).filter(file => !file.isFolder);
+        if (finalFiles.length === 0 || !taskRepo) {
+            return;
+        }
+        const allFiles = [
+            ...((taskCompleteEventDto.existingFiles || []).filter(file => !file.isFolder)),
+            ...finalFiles
+        ];
+        const latestSavedDisplay = this.buildLatestSavedDisplay(task, allFiles);
+        task.lastSavedFileName = latestSavedDisplay.lastSavedFileName;
+        task.lastSavedDisplayText = latestSavedDisplay.lastSavedDisplayText;
+        task.missingEpisodes = latestSavedDisplay.missingEpisodes;
         await taskRepo.save(task);
     }
     async _handleAutoRename(taskCompleteEventDto) {
