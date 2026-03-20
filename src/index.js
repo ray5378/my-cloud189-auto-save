@@ -25,6 +25,8 @@ const AIService = require('./services/ai');
 const CustomPushService = require('./services/message/CustomPushService');
 const { TMDBService } = require('./services/tmdb');
 const WeChatWorkManager = require('./services/WeChatWorkService');
+const cloud189Utils = require('./utils/Cloud189Utils');
+const { TaskEventHandler } = require('./services/taskEventHandler');
 
 const app = express();
 app.use(cors({
@@ -325,6 +327,31 @@ AppDataSource.initialize().then(async () => {
             },
             where: whereClause
         });
+        const taskEventHandler = new TaskEventHandler();
+        for (const task of tasks) {
+            const hasSavedDisplay = task.lastSavedDisplayText || task.lastSavedFileName || task.missingEpisodes;
+            if (hasSavedDisplay || !task.lastFileUpdateTime || !task.realFolderId || task.enableSystemProxy) {
+                continue;
+            }
+            try {
+                const account = await accountRepo.findOneBy({ id: task.accountId });
+                if (!account) {
+                    continue;
+                }
+                task.account = account;
+                const taskFiles = await taskService.getFilesByTask(task);
+                const latestSavedDisplay = taskEventHandler.buildLatestSavedDisplay(task, taskFiles);
+                if (!latestSavedDisplay.lastSavedDisplayText && !latestSavedDisplay.lastSavedFileName) {
+                    continue;
+                }
+                task.lastSavedFileName = latestSavedDisplay.lastSavedFileName;
+                task.lastSavedDisplayText = latestSavedDisplay.lastSavedDisplayText;
+                task.missingEpisodes = latestSavedDisplay.missingEpisodes;
+                await taskRepo.save(task);
+            } catch (error) {
+                logTaskEvent(`任务[${task.resourceName}]初始化最新转存信息失败: ${error.message}`);
+            }
+        }
         // username脱敏
         tasks.forEach(task => {
             task.account.username = task.account.username.replace(/(.{3}).*(.{4})/, '$1****$2');
@@ -664,9 +691,12 @@ AppDataSource.initialize().then(async () => {
             const taskId = parseInt(req.query.taskId);
             const folderId = req.query.folderId;
             const forceRefresh = req.query.refresh === 'true';
-            const cacheKey = `share_folders_${taskId}_${folderId}`;
+            const rawShareLink = typeof req.query.shareLink === 'string' ? req.query.shareLink.trim() : '';
+            const accessCodeFromQuery = typeof req.query.accessCode === 'string' ? req.query.accessCode.trim() : '';
+            const cacheScope = rawShareLink || `task_${taskId}`;
+            const cacheKey = `share_folders_${taskId}_${cacheScope}_${folderId}`;
             if (forceRefresh) {
-                folderCache.clearPrefix("share_folders_");
+                folderCache.clearPrefix(`share_folders_${taskId}_`);
             }
             if (folderCache.has(cacheKey)) {
                 return res.json({ success: true, data: folderCache.get(cacheKey) });
@@ -675,17 +705,43 @@ AppDataSource.initialize().then(async () => {
             if (!task) {
                 throw new Error('任务不存在');
             }
-            if (folderId == -11) {
-                // 返回顶级目录
-                return res.json({success: true, data: [{id: task.shareFileId, name: task.resourceName}]});
-            }
             const account = await accountRepo.findOneBy({ id: req.params.accountId });
             if (!account) {
                 throw new Error('账号不存在');
             }
             const cloud189 = Cloud189Service.getInstance(account);
-            // 查询分享目录
-            const shareDir = await cloud189.listShareDir(task.shareId, req.query.folderId, task.shareMode);
+            let shareId = task.shareId;
+            let shareMode = task.shareMode;
+            let shareFileId = task.shareFileId;
+            let resourceName = task.resourceName;
+            let accessCode = task.accessCode;
+
+            if (rawShareLink) {
+                const shareCode = cloud189Utils.parseShareCode(rawShareLink);
+                if (!shareCode) {
+                    throw new Error('分享链接无效');
+                }
+                const shareInfo = await taskService.getShareInfo(cloud189, shareCode);
+                accessCode = accessCodeFromQuery || task.accessCode;
+                if (shareInfo.shareMode == 1) {
+                    if (!accessCode) {
+                        throw new Error('分享链接为私密链接, 请输入提取码');
+                    }
+                    const accessCodeResponse = await cloud189.checkAccessCode(shareCode, accessCode);
+                    if (!accessCodeResponse || !accessCodeResponse.shareId) {
+                        throw new Error('提取码无效');
+                    }
+                    shareInfo.shareId = accessCodeResponse.shareId;
+                }
+                shareId = shareInfo.shareId;
+                shareMode = shareInfo.shareMode || (accessCode ? 2 : 1);
+                shareFileId = shareInfo.fileId;
+                resourceName = shareInfo.fileName || task.resourceName;
+            }
+            if (folderId == -11) {
+                return res.json({success: true, data: [{id: shareFileId, name: resourceName}]});
+            }
+            const shareDir = await cloud189.listShareDir(shareId, req.query.folderId, shareMode, accessCode);
             if (!shareDir || !shareDir.fileListAO) {
                 return res.json({ success: true, data: [] });
             }

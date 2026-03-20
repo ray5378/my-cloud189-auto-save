@@ -41,6 +41,37 @@ function createProgressRing(current, total) {
     `;
 }
 
+function formatLatestSavedFile(task) {
+    return task.lastSavedDisplayText || task.lastSavedFileName || '暂无转存记录';
+}
+
+function formatMissingEpisodes(task) {
+    if (!task.missingEpisodes) {
+        return '';
+    }
+    try {
+        const missingEpisodes = JSON.parse(task.missingEpisodes);
+        if (!missingEpisodes.length) {
+            return '';
+        }
+        return `缺失 ${missingEpisodes.length} 集`;
+    } catch (error) {
+        return '';
+    }
+}
+
+function formatMissingEpisodesTitle(task) {
+    if (!task.missingEpisodes) {
+        return '';
+    }
+    try {
+        const missingEpisodes = JSON.parse(task.missingEpisodes);
+        return missingEpisodes.join(', ');
+    } catch (error) {
+        return '';
+    }
+}
+
 var taskList = []
 // 从taskList中获取任务
 function getTaskById(id) {
@@ -57,7 +88,6 @@ async function fetchTasks() {
         tbody.innerHTML = '';
         data.data.forEach(task => {
             taskList.push(task)
-            const progressRing = task.totalEpisodes ? createProgressRing(task.currentEpisodes || 0, task.totalEpisodes) : '';
             const taskName = task.shareFolderName?(task.resourceName + '/' + task.shareFolderName): task.resourceName || '未知'
             const cronIcon = task.enableCron ? '<span class="cron-icon" title="已开启自定义定时任务">⏰</span>' : '';
             tbody.innerHTML += `
@@ -72,7 +102,10 @@ async function fetchTasks() {
                     <td data-label="账号">${task.account.username}</td>
                     <!--<td data-label="首次保存目录"><a href="https://cloud.189.cn/web/main/file/folder/${task.targetFolderId}" target="_blank">${task.targetFolderId}</a></td>-->
                      <td data-label="更新目录"><a href="javascript:void(0)" onclick="showFileListModal('${task.id}')" class='ellipsis'>${task.realFolderName || task.realFolderId}</a></td>
-                    <td data-label="更新数/总数">${task.currentEpisodes || 0}/${task.totalEpisodes || '未知'}${progressRing}</td>
+                    <td data-label="最新转存">
+                        <div class='ellipsis' title="${formatLatestSavedFile(task)}">${formatLatestSavedFile(task)}</div>
+                        ${formatMissingEpisodes(task) ? `<div class='ellipsis' title="${formatMissingEpisodesTitle(task)}">${formatMissingEpisodes(task)}</div>` : ''}
+                    </td>
                     <td data-label="转存时间">${formatDateTime(task.lastFileUpdateTime)}</td>
                     <td data-label="备注">${task.remark?task.remark:''}</td>
                     <td data-label="状态"><span class="status-badge status-${task.status}">${formatStatus(task.status)}</span></td>

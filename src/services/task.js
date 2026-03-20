@@ -719,6 +719,7 @@ class TaskService {
                 if (!file.isFolder) {
                     acc.existingFiles.add(file.md5);
                     acc.existingFileNames.add(file.name);
+                    acc.existingFileList.push(file);
                     if ((task.totalEpisodes == null || task.totalEpisodes <= 0) || this._checkFileSuffix(file, true, mediaSuffixs)) {
                         acc.existingMediaCount++;
                     }
@@ -727,6 +728,7 @@ class TaskService {
             }, { 
                 existingFiles: new Set(), 
                 existingFileNames: new Set(), 
+                existingFileList: [],
                 existingMediaCount: 0 
             });
             let aiFiltered = false;
@@ -754,6 +756,7 @@ class TaskService {
                 const folderPath = task.realFolderName || task.realFolderId || '';
                 const totalEps = task.totalEpisodes > 0 ? task.totalEpisodes : '?';
                 const progressEps = existingMediaCount + fileCount;
+                const latestSavedFile = [...newFiles].reverse().find(file => !file.isFolder);
 
                 // 构建具有表头的结构化通知消息
                 const lines = [
@@ -777,8 +780,11 @@ class TaskService {
                         task,
                         cloud189,
                         fileList: newFiles,
+                        existingFiles: folderFiles,
                         overwriteStrm: false,
-                        firstExecution: firstExecution
+                        firstExecution: firstExecution,
+                        taskService: this,
+                        taskRepo: this.taskRepo
                     }));
                 })
             } else if (task.lastFileUpdateTime) {
@@ -881,10 +887,12 @@ class TaskService {
             new StrmService().deleteDir(path.join(task.account.localStrmPrefix, folderName))
         }
         // 处理分享链接、访问码、分享文件夹的更新
+        let shouldResetProgress = false;
         if (updates.shareLink || updates.accessCode !== undefined || updates.shareFolderId) {
             const shareLink = updates.shareLink || task.shareLink;
             const accessCode = updates.accessCode !== undefined ? updates.accessCode : task.accessCode;
             const linkChanged = updates.shareLink && updates.shareLink !== task.shareLink;
+            const shareFolderChanged = updates.shareFolderId !== undefined && updates.shareFolderId !== task.shareFolderId;
             
             let shareCode = shareLink ? cloud189Utils.parseShareCode(shareLink) : null;
             if (shareCode) {
@@ -917,6 +925,10 @@ class TaskService {
                             task.shareFolderName = '';
                         } else if (updates.shareFolderId) {
                             task.shareFolderId = updates.shareFolderId;
+                        }
+
+                        if (linkChanged || shareFolderChanged) {
+                            shouldResetProgress = true;
                         }
                     }
                 } catch (e) {
@@ -955,6 +967,17 @@ class TaskService {
         }
         if (task.matchPattern && !task.matchValue) {
             throw new Error('匹配模式需要提供匹配值');
+        }
+        if (shouldResetProgress) {
+            task.currentEpisodes = 0;
+            task.status = 'pending';
+            task.lastFileUpdateTime = null;
+            task.lastCheckTime = null;
+            task.lastSavedFileName = null;
+            task.lastSavedDisplayText = null;
+            task.missingEpisodes = null;
+            await taskCacheManager.clearCache(task.id);
+            logTaskEvent(`任务[${task.resourceName}]资源链接或源目录已变更，已重置追更进度并清空任务缓存`);
         }
         const newTask = await this.taskRepo.save(task)
         SchedulerService.removeTaskJob(task.id)

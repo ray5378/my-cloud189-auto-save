@@ -100,6 +100,15 @@ export class Task {
     currentEpisodes!: number;
 
     @Column('text', { nullable: true })
+    lastSavedFileName!: string;
+
+    @Column('text', { nullable: true })
+    lastSavedDisplayText!: string;
+
+    @Column('text', { nullable: true })
+    missingEpisodes!: string;
+
+    @Column('text', { nullable: true })
     realFolderId!: string;
 
     @Column('text', { nullable: true })
