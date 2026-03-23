@@ -35,6 +35,8 @@ input, select {
 
 input[type="checkbox"], input[type="radio"] {
     display: inline-block;
+    appearance: checkbox !important;
+    -webkit-appearance: checkbox !important;
     width: 16px !important;
     height: 16px !important;
     min-width: 16px !important;
