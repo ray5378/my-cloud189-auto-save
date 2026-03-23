@@ -33,6 +33,14 @@ input, select {
     box-sizing: border-box;
 }
 
+input[type="checkbox"], input[type="radio"] {
+    width: auto;
+    padding: 0;
+    margin: 0 4px 0 0;
+    vertical-align: middle;
+    cursor: pointer;
+}
+
 input:focus,
 select:focus,
 textarea:focus {

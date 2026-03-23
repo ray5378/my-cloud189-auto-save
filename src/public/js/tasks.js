@@ -234,9 +234,9 @@ function renderTaskMediaWall(tasks) {
                     <div class="media-wall-actions">
                         <button class="btn-warning" onclick="executeTask(${task.id})">执行</button>
                         <button onclick="showEditTaskModal(${task.id})">修改</button>
-                        <button class="btn-default" onclick="showFileListModal('${task.id}')">目录</button>
-                        <button class="btn-default" onclick="clearTaskCache(${task.id})">清缓存</button>
                         <button class="btn-danger" onclick="deleteTask(${task.id})">删除</button>
+                        <button class="btn-default" onclick="clearTaskCache(${task.id})">清缓存</button>
+                        <button class="btn-default" onclick="showFileListModal('${task.id}')">目录</button>
                     </div>
                 </td>
             </tr>
@@ -270,9 +270,9 @@ async function fetchTasks() {
             tbody.innerHTML += `
                 <tr data-status='${task.status}' data-task-id='${task.id}' data-name='${taskName}'>
                     <td>
-                        <button class="btn-danger" onclick="deleteTask(${task.id})">删除</button>
                         <button class="btn-warning" onclick="executeTask(${task.id})">执行</button>
                         <button onclick="showEditTaskModal(${task.id})">修改</button>
+                        <button class="btn-danger" onclick="deleteTask(${task.id})">删除</button>
                         <button class="btn-default" onclick="clearTaskCache(${task.id})">清缓存</button>
                     </td>
                     <td data-label="资源名称">${cronIcon}<a href="${task.shareLink}" target="_blank" class='ellipsis' title="${taskName}">${taskName}</a></td>

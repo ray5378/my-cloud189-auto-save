@@ -107,9 +107,10 @@ body::after {
 .header {
     position: relative;
     justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 18px;
-    padding: 28px 32px;
+    align-items: center;
+    display: flex;
+    margin-bottom: 12px;
+    padding: 12px 24px;
     border: 1px solid var(--panel-border);
     border-radius: var(--radius-lg);
     background: linear-gradient(135deg, var(--header-surface), rgba(255, 255, 255, 0.38));
@@ -130,15 +131,17 @@ body::after {
     position: relative;
     margin: 0;
     font-family: var(--font-display);
-    font-size: clamp(28px, 4vw, 42px);
+    font-size: clamp(20px, 2.5vw, 26px);
     font-weight: 700;
     letter-spacing: -0.03em;
 }
 
 .header-meta {
+    display: flex;
+    align-items: center;
     position: relative;
-    gap: 10px;
-    padding: 10px 14px;
+    gap: 12px;
+    padding: 6px 14px;
     border-radius: 999px;
     background: var(--surface-muted);
 }
@@ -503,12 +506,10 @@ tbody th:last-child {
 }
 
 .theme-switch {
-    position: sticky;
-    top: 18px;
-    z-index: 15;
     display: flex;
     justify-content: flex-end;
-    margin-bottom: 14px;
+    align-items: center;
+    margin: 0;
 }
 
 [data-ui-style="media"] .header,
@@ -521,8 +522,8 @@ tbody th:last-child {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 48px;
-    height: 48px;
+    width: 32px;
+    height: 32px;
     border: 1px solid var(--panel-border);
     border-radius: 50%;
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(248, 250, 252, 0.74));
@@ -597,7 +598,7 @@ tbody th:last-child {
     content: "追更与转存中枢";
     position: absolute;
     right: 28px;
-    bottom: 24px;
+    bottom: 12px;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.18em;
@@ -647,7 +648,7 @@ tbody th:last-child {
 
 [data-ui-style="media"] #taskTable tr.media-wall-card {
     display: grid;
-    grid-template-columns: 136px minmax(0, 1fr);
+    grid-template-columns: 170px minmax(0, 1fr);
     gap: 20px;
     align-items: stretch;
     padding: 18px;
@@ -675,8 +676,8 @@ tbody th:last-child {
 
 .media-wall-poster {
     position: relative;
-    width: 136px;
-    min-height: 204px;
+    width: 170px;
+    min-height: 255px;
     border-radius: 18px;
     overflow: hidden;
     background-size: cover;
