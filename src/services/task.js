@@ -881,7 +881,7 @@ class TaskService {
                             } catch (error) {
                                 logTaskEvent(`[CAS] ${casFile.name} 处理异常: ${error.message}`);
                             }
-                            await new Promise(resolve => setTimeout(resolve, 300));
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         }
 
                         // 第2.3步: 根据配置决定是否删除已转存的 .cas 文件

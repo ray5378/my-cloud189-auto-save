@@ -442,14 +442,14 @@ class Cloud189Service {
         const rsaKey = await this._getRsaKey();
         const sessionKey = await this._getSessionKey();
         const params = {
-            parentFolderId,
+            parentFolderId: String(parentFolderId),
             fileName: encodeURIComponent(fileName),
-            fileSize,
-            sliceSize
+            fileSize: String(fileSize),
+            sliceSize: String(sliceSize)
         };
         if (fileMd5 && sliceMd5) {
-            params.fileMd5 = fileMd5;
-            params.sliceMd5 = sliceMd5;
+            params.fileMd5 = String(fileMd5);
+            params.sliceMd5 = String(sliceMd5);
         } else {
             params.lazyCheck = '1';
         }
@@ -466,7 +466,8 @@ class Cloud189Service {
             }
             return await got(url, options).json();
         } catch (error) {
-            logTaskEvent('initMultiUpload 失败: ' + error.message);
+            const respBody = error?.response?.body || '';
+            logTaskEvent('initMultiUpload 失败: ' + error.message + (respBody ? ` | 响应: ${respBody.substring(0, 500)}` : ''));
             throw error;
         }
     }
@@ -475,7 +476,7 @@ class Cloud189Service {
     async checkTransSecond(fileMd5, sliceMd5, uploadFileId) {
         const rsaKey = await this._getRsaKey();
         const sessionKey = await this._getSessionKey();
-        const params = { fileMd5, sliceMd5, uploadFileId };
+        const params = { fileMd5: String(fileMd5), sliceMd5: String(sliceMd5), uploadFileId: String(uploadFileId) };
         const uri = '/person/checkTransSecond';
         const { url, headers } = UploadCryptoUtils.buildUploadRequest(params, uri, rsaKey, sessionKey);
 
@@ -489,7 +490,8 @@ class Cloud189Service {
             }
             return await got(url, options).json();
         } catch (error) {
-            logTaskEvent('checkTransSecond 失败: ' + error.message);
+            const respBody = error?.response?.body || '';
+            logTaskEvent('checkTransSecond 失败: ' + error.message + (respBody ? ` | 响应: ${respBody.substring(0, 500)}` : ''));
             throw error;
         }
     }
@@ -498,7 +500,7 @@ class Cloud189Service {
     async commitMultiUpload(uploadFileId, fileMd5, sliceMd5) {
         const rsaKey = await this._getRsaKey();
         const sessionKey = await this._getSessionKey();
-        const params = { uploadFileId, fileMd5, sliceMd5, lazyCheck: 1, opertype: '3' };
+        const params = { uploadFileId: String(uploadFileId), fileMd5: String(fileMd5), sliceMd5: String(sliceMd5), lazyCheck: '1', opertype: '3' };
         const uri = '/person/commitMultiUploadFile';
         const { url, headers } = UploadCryptoUtils.buildUploadRequest(params, uri, rsaKey, sessionKey);
 
@@ -512,7 +514,14 @@ class Cloud189Service {
             }
             return await got(url, options).json();
         } catch (error) {
-            logTaskEvent('commitMultiUpload 失败: ' + error.message);
+            const respBody = error?.response?.body || '';
+            const statusCode = error?.response?.statusCode || '';
+            const respHeaders = error?.response?.headers || {};
+            // 403 时输出更多调试信息
+            const debugInfo = statusCode === 403
+                ? ` | 状态码: ${statusCode}, 响应头: ${JSON.stringify(respHeaders).substring(0, 300)}, 响应体: ${respBody.substring(0, 500)}`
+                : (respBody ? ` | 响应: ${respBody.substring(0, 500)}` : '');
+            logTaskEvent('commitMultiUpload 失败: ' + error.message + debugInfo);
             throw error;
         }
     }
@@ -529,11 +538,17 @@ class Cloud189Service {
             if (initResult.errorCode) {
                 throw new Error(initResult.errorMsg || initResult.errorCode);
             }
+            if (initResult.code && initResult.code !== 'SUCCESS') {
+                throw new Error(initResult.msg || initResult.code);
+            }
 
             const uploadFileId = initResult.data?.uploadFileId;
             if (!uploadFileId) {
-                throw new Error('初始化上传失败: 缺少 uploadFileId');
+                throw new Error('初始化上传失败: 缺少 uploadFileId (响应: ' + JSON.stringify(initResult).substring(0, 300) + ')');
             }
+
+            // 步骤间延迟，避免请求过快被限流
+            await new Promise(resolve => setTimeout(resolve, 500));
 
             // 检查 initMultiUpload 返回的 fileDataExists
             // 如果 fileDataExists == 1，说明云端已有该文件数据，可以直接 commit
@@ -544,16 +559,44 @@ class Cloud189Service {
                 if (checkResult.errorCode) {
                     throw new Error(checkResult.errorMsg || checkResult.errorCode);
                 }
+                if (checkResult.code && checkResult.code !== 'SUCCESS') {
+                    throw new Error(checkResult.msg || checkResult.code);
+                }
                 const fileDataExists = checkResult.data?.fileDataExists;
                 if (fileDataExists != 1) {
                     throw new Error('文件不存在于云端，无法秒传');
                 }
             }
 
-            // 第3步: 提交上传
-            const commitResult = await this.commitMultiUpload(uploadFileId, fileMd5, sliceMd5);
+            // 步骤间延迟，避免请求过快被限流
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // 第3步: 提交上传（含 403 重试）
+            let commitResult;
+            let retryCount = 0;
+            const maxRetries = 3;
+            while (retryCount < maxRetries) {
+                try {
+                    commitResult = await this.commitMultiUpload(uploadFileId, fileMd5, sliceMd5);
+                    break; // 成功则跳出
+                } catch (error) {
+                    retryCount++;
+                    if (error.message && error.message.includes('403') && retryCount < maxRetries) {
+                        const delay = retryCount * 2000; // 2s, 4s, 6s 递增延迟
+                        logTaskEvent(`[CAS秒传] commitMultiUpload 403，第 ${retryCount} 次重试，等待 ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        // 重试前刷新 RSA 密钥
+                        this._rsaKey = null;
+                        continue;
+                    }
+                    throw error;
+                }
+            }
             if (commitResult.errorCode) {
                 throw new Error(commitResult.errorMsg || commitResult.errorCode);
+            }
+            if (commitResult.code && commitResult.code !== 'SUCCESS') {
+                throw new Error(commitResult.msg || commitResult.code);
             }
 
             const uploadedFileId = commitResult.file?.userFileId || commitResult.file?.id || commitResult.data?.fileId || null;
