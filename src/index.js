@@ -800,6 +800,7 @@ AppDataSource.initialize().then(async () => {
         if (!task) {
             throw new Error('任务不存在');
         }
+        logTaskEvent(`[批量重命名] 获取用户确认，开始对 ${files.length} 个文件执行天翼云远端重命名...`);
         // 从realFolderName中获取文件夹名称 删除对应的本地文件
         const folderName = task.realFolderName.substring(task.realFolderName.indexOf('/') + 1);
         const strmService = new StrmService();
@@ -817,11 +818,14 @@ AppDataSource.initialize().then(async () => {
         for (const file of files) {
             const renameResult = await cloud189.renameFile(file.fileId, file.destFileName);
             if (!renameResult) {
+                logTaskEvent(`[批量重命名] 接口异常导致失败`);
                 throw new Error('重命名失败');
             }
             if (renameResult.res_code != 0) {
+                logTaskEvent(`[批量重命名] 原文件 ${file.oldName} 失败: ${renameResult.res_msg}`);
                 result.push(`文件${file.destFileName} ${renameResult.res_msg}`)
             }else{
+                logTaskEvent(`[批量重命名] 成功: ${file.oldName} => ${file.destFileName}`);
                 if (strmEnabled){
                     // 从realFolderName中获取文件夹名称 删除对应的本地文件
                     const oldFile = path.join(folderName, file.oldName);
@@ -830,6 +834,7 @@ AppDataSource.initialize().then(async () => {
                 successFiles.push({id: file.fileId, name: file.destFileName})
             }
         }
+        logTaskEvent(`[批量重命名] 对选中的文件重命名请求执行完成。成功: ${successFiles.length}，失败: ${result.length}`);
         // 重新生成STRM文件
         if (strmEnabled){
             strmService.generate(task, successFiles, false, false)
@@ -1022,6 +1027,8 @@ AppDataSource.initialize().then(async () => {
             if (!task) {
                 throw new Error('任务不存在');
             }
+            
+            logTaskEvent(`[批量重命名] 开始对任务 [${task.resourceName}] 选中的 ${files.length} 个文件使用 AI 分析和重命名建议...`);
             // 开始ai分析
             const resourceInfo = await taskService._analyzeResourceInfo(
                 task.resourceName,
@@ -1029,7 +1036,9 @@ AppDataSource.initialize().then(async () => {
                 'file',
                 task
             )
-            return res.json({ success: true, data: await taskService.handleAiRename(files, resourceInfo) });
+            const renamePreviewResult = await taskService.handleAiRename(files, resourceInfo);
+            logTaskEvent(`[批量重命名] AI 分析完成，生成了 ${renamePreviewResult.length} 条有效建议，等待用户确认`);
+            return res.json({ success: true, data: renamePreviewResult });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
