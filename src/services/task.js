@@ -797,6 +797,7 @@ class TaskService {
 
             // ============== 第2步: CAS 秒传处理 ==============
             let casResults = [];
+            const failedShareFileIds = new Set();
             if (enableCasRapidUpload) {
                 // 从分享文件中筛选 .cas 文件
                 const allCasFiles = shareFiles.filter(f => !f.isFolder && CasUtils.isCasFile(f.name));
@@ -842,6 +843,7 @@ class TaskService {
                                 const savedFile = savedCasFiles.find(f => f.name === casFile.name);
                                 if (!savedFile) {
                                     logTaskEvent(`[CAS] 转存后未找到: ${casFile.name}`);
+                                    failedShareFileIds.add(String(casFile.id));
                                     continue;
                                 }
 
@@ -872,14 +874,17 @@ class TaskService {
                                     } else {
                                         casResults.push({ fileName: realFileName, success: false, reason: result.message });
                                         logTaskEvent(`[CAS秒传] 失败: ${casFile.name} → ${realFileName}: ${result.message}`);
+                                        failedShareFileIds.add(String(casFile.id));
                                     }
                                 } else {
                                     logTaskEvent(`[CAS] ${casFile.name} 解析失败: 缺少 md5 或 slice_md5`);
+                                    failedShareFileIds.add(String(casFile.id));
                                 }
                                 // 记录 .cas 文件 ID 以便后续删除
                                 savedCasFileIds.push(savedFile.id);
                             } catch (error) {
                                 logTaskEvent(`[CAS] ${casFile.name} 处理异常: ${error.message}`);
+                                failedShareFileIds.add(String(casFile.id));
                             }
                             await new Promise(resolve => setTimeout(resolve, 1000));
                         }
@@ -905,11 +910,8 @@ class TaskService {
                         logTaskEvent(`[CAS] 处理异常: ${error.message}`);
                     }
                 }
-                // 将 CAS 文件的 id 加入缓存（无论秒传是否成功，避免重复处理）
-                const casEvaluatedIds = newCasFiles.map(f => String(f.id));
-                if (casEvaluatedIds.length > 0) {
-                    await taskCacheManager.addCache(task.id, casEvaluatedIds);
-                }
+                // CAS 文件的处理结果已记录在 failedShareFileIds
+                // 统一在最后根据结果更新缓存，从而过滤掉处理失败的项
             }
 
             const casSuccessCount = casResults.filter(r => r.success).length;
@@ -974,7 +976,9 @@ class TaskService {
                 logTaskEvent(`${task.resourceName} 已完结`)
             }
 
-            const newEvaluatedIds = unprocessedShareFiles.filter(f => !f.isFolder).map(f => String(f.id));
+            const newEvaluatedIds = unprocessedShareFiles
+                .filter(f => !f.isFolder && !failedShareFileIds.has(String(f.id)))
+                .map(f => String(f.id));
             if (newEvaluatedIds.length > 0) {
                 await taskCacheManager.addCache(task.id, newEvaluatedIds);
             }
