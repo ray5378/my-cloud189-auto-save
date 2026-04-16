@@ -1053,8 +1053,7 @@ AppDataSource.initialize().then(async () => {
             // 构建测试请求参数 (采用极轻量的内容探测)
             const targetUrl = baseUrl.endsWith('/') ? `${baseUrl}chat/completions` : `${baseUrl}/chat/completions`;
             
-            const fetchReq = require('node-fetch'); // 使用现有的 node-fetch
-            const response = await fetchReq(targetUrl, {
+            const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1091,8 +1090,7 @@ AppDataSource.initialize().then(async () => {
             
             const targetUrl = baseUrl.endsWith('/') ? `${baseUrl}models` : `${baseUrl}/models`;
             
-            const fetchReq = require('node-fetch');
-            const response = await fetchReq(targetUrl, {
+            const response = await fetch(targetUrl, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
