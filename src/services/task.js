@@ -931,12 +931,9 @@ class TaskService {
                                         casResults.push({ fileName: realFileName, success: true });
                                         logTaskEvent(`[CAS秒传] 成功: ${casFile.name} → ${realFileName}`);
                                         currentFileNames.add(realFileName);
-                                        newFiles.push({
-                                            id: uploadResult.userFileId || casFile.id,
-                                            name: realFileName,
-                                            isFolder: false,
-                                            md5: parsed.md5.toUpperCase()
-                                        });
+                                        newFiles.push({});
+                                        // 记录 .cas 文件 ID 以便删除（仅当成功且文件存在时）
+                                        if (savedFile && savedFile.id) { savedCasFileIds.push(savedFile.id); }
                                         // Step C: 可选清理家庭临时文件
                                         if (enableDeleteFamilyTempFile && familyFileIdForCleanup && this._casFamilyInfo) {
                                             logTaskEvent(`[家庭中转] 清理家庭空间临时文件: ${familyFileIdForCleanup}`);
