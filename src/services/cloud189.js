@@ -430,23 +430,20 @@ class Cloud189Service {
     async saveFamilyFileToPersonal(familyId, familyFileId, personalFolderId, familyFolderId) {
         try {
             logTaskEvent(`[家庭中转] 将家庭文件(${familyFileId})转存到个人目录(${personalFolderId})`);
-            const params = {
+            // 构建查询参数（油猴脚本证明此接口用 GET 请求，参数放 URL query string）
+            const queryParams = new URLSearchParams({
                 familyId: String(familyId),
-                fileIdList: String(familyFileId),
-            };
-            // 设置目标个人目录 (Java BO 字段名: targetParentId)
+                fileIdList: String(familyFileId)
+            });
             if (personalFolderId && String(personalFolderId) !== '-11') {
-                params.targetParentId = String(personalFolderId);
+                queryParams.set('targetParentId', String(personalFolderId));
             }
-            // 设置源家庭目录 (Java BO 字段名: srcParentId)
             if (familyFolderId) {
-                params.srcParentId = String(familyFolderId);
+                queryParams.set('srcParentId', String(familyFolderId));
             }
-            logTaskEvent(`[家庭中转] 请求参数: ${JSON.stringify(params)}`);
-            const result = await this.request('/api/open/family/manage/saveFileToMember.action', {
-                method: 'POST',
-                form: params,
-                searchParams: params  // 同时通过 URL query string 传递，绕过 Spring 参数绑定限制
+            logTaskEvent(`[家庭中转] 请求参数: ${queryParams.toString()}`);
+            const result = await this.request(`/api/open/family/manage/saveFileToMember.action?${queryParams.toString()}`, {
+                method: 'GET'
             });
             // 失败时 request() 底层会返回 null，不能无脑视为成功
             if (!result) {
