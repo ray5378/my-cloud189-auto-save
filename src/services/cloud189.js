@@ -445,7 +445,8 @@ class Cloud189Service {
             logTaskEvent(`[家庭中转] 请求参数: ${JSON.stringify(params)}`);
             const result = await this.request('/api/open/family/manage/saveFileToMember.action', {
                 method: 'POST',
-                form: params
+                form: params,
+                searchParams: params  // 同时通过 URL query string 传递，绕过 Spring 参数绑定限制
             });
             // 失败时 request() 底层会返回 null，不能无脑视为成功
             if (!result) {
