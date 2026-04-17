@@ -916,10 +916,9 @@ class TaskService {
                                         }
                                     }
 
-                                    // --- 降级：个人接口秒传 ---
-                                    if (!uploadResult.success) {
-                                        const reason = enableCasFamilyTransfer ? '（家庭中转失败降级）' : '（使用个人接口）';
-                                        logTaskEvent(`[CAS秒传] 执行个人接口秒传${reason}: ${realFileName}`);
+                                    // --- 个人接口秒传（非强制家庭空间模式） ---
+                                    if (!uploadResult.success && !enableCasFamilyTransfer) {
+                                        logTaskEvent(`[CAS秒传] 执行个人接口秒传: ${realFileName}`);
                                         uploadResult = await cloud189.rapidUpload(
                                             realFileName, parseInt(parsed.size),
                                             parsed.md5.toUpperCase(), parsed.slice_md5.toUpperCase(),
