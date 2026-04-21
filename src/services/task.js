@@ -1497,8 +1497,8 @@ class TaskService {
         if (message.length > 20) {
             message.splice(5, message.length - 10, '├─ ...');
         }
+        // .cas 文件重命名仅记录日志，不推送通知（用户不需要看到内部处理细节）
         message.length > 0 && logTaskEvent(`${task.resourceName}自动重命名完成: \n${message.join('\n')}`)
-        message.length > 0 && this.messageUtil.sendMessage(`【天翼云转存】\n${task.resourceName}自动重命名: \n${message.join('\n')}`);
     }
 
     // 根据AI分析结果生成新文件名
@@ -1655,7 +1655,7 @@ class TaskService {
     }
 
     // 检查任务状态
-    async checkTaskStatus(cloud189, taskId, count = 0, batchTaskDto) {
+    async checkTaskStatus(cloud189, taskId, count = 0, batchTaskDto, lastStatus = null) {
         if (count > 5) {
              return false;
         }
@@ -1665,11 +1665,15 @@ class TaskService {
         if (!task) {
             return false;
         }
-        logTaskEvent(`任务编号: ${task.taskId}, 任务状态: ${task.taskStatus}`)
+        // 只在状态变化时输出日志，减少冗余
+        if (lastStatus === null || task.taskStatus !== lastStatus) {
+            const statusText = {1: '等待中', 2: '有冲突', 3: '处理中', 4: '已完成'};
+            logTaskEvent(`批量任务 ${task.taskId}: ${statusText[task.taskStatus] || task.taskStatus}`);
+        }
         if (task.taskStatus == 3 || task.taskStatus == 1) {
             // 暂停200毫秒
             await new Promise(resolve => setTimeout(resolve, 200));
-            return await this.checkTaskStatus(cloud189,taskId, count++, batchTaskDto)
+            return await this.checkTaskStatus(cloud189, taskId, count++, batchTaskDto, task.taskStatus)
         }
         if (task.taskStatus == 4) {
             // 如果failedCount > 0 说明有失败或者被和谐的文件, 需要查一次文件列表

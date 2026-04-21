@@ -32,6 +32,9 @@ function showEditTaskModal(id) {
     document.getElementById('editShareLink').value = task.shareLink;
     document.getElementById('editAccessCode').value = task.accessCode || '';
     document.getElementById('editShareParseError').textContent = '';
+    document.getElementById('editShareLinkTip').style.display = 'none';  // 隐藏提示
+    // 记录原始链接用于判断是否变化
+    document.getElementById('editShareLink').dataset.originalLink = task.shareLink || '';
     document.getElementById('shareFolder').value = task.shareFolderName;
     document.getElementById('shareFolderId').value = task.shareFolderId;
     document.getElementById('editMatchPattern').value = task.matchPattern;
@@ -80,6 +83,15 @@ async function parseEditShareLink() {
         if (data.success && data.data && data.data.length > 0) {
             document.getElementById('shareFolder').value = data.data[0].name;
             document.getElementById('shareFolderId').value = data.data[0].id;
+            // 检查链接是否变化，显示提示
+            const originalLink = document.getElementById('editShareLink').dataset.originalLink || '';
+            const currentLink = document.getElementById('editShareLink').value.trim();
+            const tipEl = document.getElementById('editShareLinkTip');
+            if (currentLink !== originalLink) {
+                tipEl.style.display = 'block';
+            } else {
+                tipEl.style.display = 'none';
+            }
         } else {
             if (data.error) {
                 shareParseError.textContent = `解析失败: ${data.error}`;
