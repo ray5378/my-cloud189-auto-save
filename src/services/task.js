@@ -1232,6 +1232,9 @@ class TaskService {
                                     }
                                     if (deletedCount > 0) {
                                         logTaskEvent(`[CAS] ✅ 已清理 ${deletedCount} 个 .cas 文件`);
+                                        // 等待云端真正删除（API 返回成功但实际有延迟）
+                                        logTaskEvent(`[CAS] 等待 3 秒确保云端删除生效...`);
+                                        await new Promise(resolve => setTimeout(resolve, 3000));
                                     }
                                 } catch (e) {
                                     logTaskEvent(`[CAS] 清理 .cas 文件异常: ${e.message}`);
