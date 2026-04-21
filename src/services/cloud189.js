@@ -631,6 +631,118 @@ class Cloud189Service {
         }
     }
 
+    // 创建家庭空间目录
+    async createFamilyFolder(familyId, folderName, parentFolderId = '') {
+        try {
+            logTaskEvent(`[家庭中转] 创建家庭目录: ${folderName}, 父目录ID: ${parentFolderId || '根目录'}`);
+            const result = await this.request('/api/open/family/file/createFolder.action', {
+                method: 'POST',
+                form: {
+                    familyId: String(familyId),
+                    parentFolderId: String(parentFolderId || ''),
+                    folderName: folderName
+                }
+            });
+            if (result?.res_code !== undefined && result.res_code !== 0) {
+                throw new Error(result.res_message || '创建目录失败');
+            }
+            const folderId = result?.id || result?.folderId || result?.data?.folderId;
+            logTaskEvent(`[家庭中转] 家庭目录创建成功: ${folderName}, ID: ${folderId}`);
+            return { success: true, folderId: String(folderId) };
+        } catch (error) {
+            logTaskEvent(`[家庭中转] 创建家庭目录失败: ${error.message}`);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // 清空家庭空间指定目录下的所有文件（用于清理中转目录）
+    async clearFamilyFolder(familyId, folderId) {
+        try {
+            logTaskEvent(`[家庭中转] 开始清空家庭中转目录(ID: ${folderId})...`);
+            // 获取目录下所有文件
+            const result = await this.request('/api/open/family/file/listFiles.action', {
+                method: 'GET',
+                searchParams: {
+                    familyId,
+                    folderId: String(folderId),
+                    pageNum: 1,
+                    pageSize: 500,
+                    mediaType: 0,
+                    orderBy: 3,
+                    descending: true
+                }
+            });
+
+            if (!result || !result.fileListAO) {
+                logTaskEvent(`[家庭中转] 中转目录为空，无需清理`);
+                return { success: true, deletedCount: 0 };
+            }
+
+            const fileList = result.fileListAO.fileList || [];
+            const folderList = result.fileListAO.folderList || [];
+            const allItems = [...fileList, ...folderList];
+
+            if (allItems.length === 0) {
+                logTaskEvent(`[家庭中转] 中转目录为空，无需清理`);
+                return { success: true, deletedCount: 0 };
+            }
+
+            // 构建删除任务
+            const taskInfos = allItems.map(item => ({
+                fileId: String(item.id),
+                fileName: item.name,
+                isFolder: item.isFolder ? 1 : 0
+            }));
+
+            logTaskEvent(`[家庭中转] 清空目录: 共 ${allItems.length} 个文件/文件夹`);
+
+            // 创建批量删除任务
+            const deleteResult = await this.request('/api/open/batch/createBatchTask.action', {
+                method: 'POST',
+                form: {
+                    type: 'DELETE',
+                    taskInfos: JSON.stringify(taskInfos),
+                    targetFolderId: '',
+                    familyId: String(familyId)
+                }
+            });
+
+            if (deleteResult?.res_code !== undefined && deleteResult.res_code !== 0) {
+                throw new Error(deleteResult.res_message || '批量删除失败');
+            }
+
+            logTaskEvent(`[家庭中转] ✅ 已清空家庭中转目录，删除 ${allItems.length} 个文件`);
+            return { success: true, deletedCount: allItems.length };
+        } catch (error) {
+            logTaskEvent(`[家庭中转] 清空家庭中转目录失败: ${error.message}`);
+            return { success: false, message: error.message };
+        }
+    }
+
+    // 删除家庭空间目录（用于删除自动创建的临时目录）
+    async deleteFamilyFolder(familyId, folderId, folderName = '') {
+        try {
+            logTaskEvent(`[家庭中转] 删除家庭目录: ${folderName || folderId}`);
+            const result = await this.request('/api/open/batch/createBatchTask.action', {
+                method: 'POST',
+                form: {
+                    type: 'DELETE',
+                    taskInfos: JSON.stringify([{ fileId: String(folderId), fileName: folderName || '', isFolder: 1 }]),
+                    targetFolderId: '',
+                    familyId: String(familyId)
+                }
+            });
+            if (result?.res_code !== undefined && result.res_code !== 0) {
+                throw new Error(result.res_message || '删除目录失败');
+            }
+            logTaskEvent(`[家庭中转] ✅ 已删除家庭目录: ${folderName || folderId}`);
+            return { success: true };
+        } catch (error) {
+            logTaskEvent(`[家庭中转] 删除家庭目录失败: ${error.message}`);
+            return { success: false, message: error.message };
+        }
+    }
+
     // 获取网盘直链
     async getDownloadLink(fileId, shareId = null) {
         const type = shareId? 4: 2

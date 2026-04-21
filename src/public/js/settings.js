@@ -287,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
             document.getElementById('casFamilyFolderId').value = '';
-            message.success('已重置为家庭根目录');
+            message.success('已重置为自动创建临时目录');
         });
     }
 });

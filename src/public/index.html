@@ -462,7 +462,7 @@
                             <div class="settings-item">
                                 <div class="settings-item-content">
                                     <label><input type="checkbox" id="enableDeleteCasFile">处理后删除 .cas 文件</label>
-                                    <small class="form-text">关闭则保留 .cas 文件，可用于播放器直接播放</small>
+                                    <small class="form-text">任务执行完成后，自动清理任务目标目录下的所有 .cas 文件</small>
                                 </div>
                             </div>
                             <div class="settings-item">
@@ -475,17 +475,17 @@
                                 <div class="settings-item-label">家庭空间中转目录</div>
                                 <div class="settings-item-content">
                                     <div class="settings-inline-inputs">
-                                        <input type="text" id="casFamilyFolderId" placeholder="留空 = 家庭根目录（推荐）">
+                                        <input type="text" id="casFamilyFolderId" placeholder="留空 = 自动创建临时目录（推荐）">
                                         <button type="button" id="browseFamilyFolderBtn" class="btn-secondary">浏览选择</button>
                                         <button type="button" id="clearFamilyFolderBtn" class="btn-secondary">清空</button>
                                     </div>
-                                    <small class="form-text">点击「浏览选择」可视化选择家庭空间子目录</small>
+                                    <small class="form-text">指定目录：秒传后清空该目录；留空：自动在家庭根目录下创建临时目录并清理</small>
                                 </div>
                             </div>
                             <div class="settings-item">
                                 <div class="settings-item-content">
                                     <label><input type="checkbox" id="enableDeleteFamilyTempFile">家庭中转后清理临时文件</label>
-                                    <small class="form-text">推荐关闭，依赖「自动清空家庭回收站」定期清理</small>
+                                    <small class="form-text">秒传完成后清空家庭中转目录并释放配额，推荐开启</small>
                                 </div>
                             </div>
                             <div class="settings-item">
