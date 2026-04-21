@@ -646,8 +646,6 @@ AppDataSource.initialize().then(async () => {
             logTaskEvent(`================================`);
             const taskName = task.shareFolderName?(task.resourceName + '/' + task.shareFolderName): task.resourceName || '未知'
             logTaskEvent(`任务[${taskName}]开始执行`);
-            // 调试日志：追踪 lastFileUpdateTime 状态
-            logTaskEvent(`[DEBUG] lastFileUpdateTime=${task.lastFileUpdateTime}, type=${typeof task.lastFileUpdateTime}`);
             const result = await taskService.processTask(task);
             if (result) {
                 messageUtil.sendMessage(result)

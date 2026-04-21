@@ -1125,17 +1125,26 @@ class TaskService {
                             }
                         }
 
-                        // 第2.3步: 根据配置决定是否删除已转存的 .cas 文件
+                        // 第2.3步: 根据配置决定是否删除目标目录中的所有 .cas 文件
                         if (enableDeleteCasFile) {
-                            for (const fileId of savedCasFileIds) {
-                                try {
-                                    await cloud189.deleteFile(fileId);
-                                } catch (e) {
-                                    logTaskEvent(`[CAS] 删除 .cas 文件失败(${fileId}): ${e.message}`);
+                            // 重新获取目标目录，清理所有 .cas 文件（包括遗留的）
+                            try {
+                                const latestFiles = await this.getAllFolderFiles(cloud189, task);
+                                const allCasFilesInTarget = latestFiles.filter(f => CasUtils.isCasFile(f.name));
+                                let deletedCount = 0;
+                                for (const casFile of allCasFilesInTarget) {
+                                    try {
+                                        await cloud189.deleteFile(casFile.id);
+                                        deletedCount++;
+                                    } catch (e) {
+                                        logTaskEvent(`[CAS] 删除遗留 .cas 文件失败(${casFile.name}): ${e.message}`);
+                                    }
                                 }
-                            }
-                            if (savedCasFileIds.length > 0) {
-                                logTaskEvent(`[CAS] 已清理 ${savedCasFileIds.length} 个 .cas 文件`);
+                                if (deletedCount > 0) {
+                                    logTaskEvent(`[CAS] 已清理 ${deletedCount} 个 .cas 文件（含遗留）`);
+                                }
+                            } catch (e) {
+                                logTaskEvent(`[CAS] 清理 .cas 文件异常: ${e.message}`);
                             }
                         } else {
                             if (savedCasFileIds.length > 0) {
@@ -1288,8 +1297,6 @@ class TaskService {
 
     // 更新任务
     async updateTask(taskId, updates) {
-        // 调试日志：追踪前端传来的参数
-        logTaskEvent(`[DEBUG] updateTask 收到参数: shareLink=${updates.shareLink?.substring(0, 50)}, shareFolderId=${updates.shareFolderId}`);
         const task = await this.taskRepo.findOne({
             where: { id: taskId },
             relations: {
@@ -1320,9 +1327,6 @@ class TaskService {
             const accessCode = updates.accessCode !== undefined ? updates.accessCode : task.accessCode;
             const linkChanged = updates.shareLink && updates.shareLink !== task.shareLink;
             const shareFolderChanged = updates.shareFolderId !== undefined && updates.shareFolderId !== task.shareFolderId;
-
-            // 调试日志：追踪链接变更判断
-            logTaskEvent(`[DEBUG] linkChanged=${linkChanged}, shareFolderChanged=${shareFolderChanged}, 新链接=${updates.shareLink?.substring(0, 30)}, 旧链接=${task.shareLink?.substring(0, 30)}`);
 
             let shareCode = shareLink ? cloud189Utils.parseShareCode(shareLink) : null;
             if (shareCode) {
@@ -1410,8 +1414,6 @@ class TaskService {
             logTaskEvent(`任务[${task.resourceName}]资源链接或源目录已变更，已重置追更进度并清空任务缓存`);
         }
         const newTask = await this.taskRepo.save(task)
-        // 调试日志：追踪保存后的状态
-        logTaskEvent(`[DEBUG] 保存后 lastFileUpdateTime=${newTask.lastFileUpdateTime}, shouldResetProgress=${shouldResetProgress}`);
         SchedulerService.removeTaskJob(task.id)
         if (task.enableCron && task.cronExpression) {
             SchedulerService.saveTaskJob(newTask, this)
