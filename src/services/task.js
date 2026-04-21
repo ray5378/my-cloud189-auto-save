@@ -1288,6 +1288,8 @@ class TaskService {
 
     // 更新任务
     async updateTask(taskId, updates) {
+        // 调试日志：追踪前端传来的参数
+        logTaskEvent(`[DEBUG] updateTask 收到参数: shareLink=${updates.shareLink?.substring(0, 50)}, shareFolderId=${updates.shareFolderId}`);
         const task = await this.taskRepo.findOne({
             where: { id: taskId },
             relations: {
@@ -1318,7 +1320,10 @@ class TaskService {
             const accessCode = updates.accessCode !== undefined ? updates.accessCode : task.accessCode;
             const linkChanged = updates.shareLink && updates.shareLink !== task.shareLink;
             const shareFolderChanged = updates.shareFolderId !== undefined && updates.shareFolderId !== task.shareFolderId;
-            
+
+            // 调试日志：追踪链接变更判断
+            logTaskEvent(`[DEBUG] linkChanged=${linkChanged}, shareFolderChanged=${shareFolderChanged}, 新链接=${updates.shareLink?.substring(0, 30)}, 旧链接=${task.shareLink?.substring(0, 30)}`);
+
             let shareCode = shareLink ? cloud189Utils.parseShareCode(shareLink) : null;
             if (shareCode) {
                 const cloud189 = Cloud189Service.getInstance(task.account);
