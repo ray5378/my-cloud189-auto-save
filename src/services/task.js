@@ -837,6 +837,7 @@ class TaskService {
             const enableCasFamilyTransfer = ConfigService.getConfigValue('task.enableCasFamilyTransfer');
             const casFamilyFolderIdCfg = ConfigService.getConfigValue('task.casFamilyFolderId') || '';
             const enableDeleteFamilyTempFile = ConfigService.getConfigValue('task.enableDeleteFamilyTempFile');
+            const casConcurrentLimit = ConfigService.getConfigValue('task.casConcurrentLimit') || 5;
 
             // 排除 .cas 文件，避免进入常规转存流程
             const newFiles = shareFiles
@@ -915,145 +916,181 @@ class TaskService {
                     try {
                         // 刷新目录文件列表（常规转存可能刚加入新文件）
                         const folderFilesAfter = await this.getAllFolderFiles(cloud189, task);
+                        // 构建去后缀的文件名集合，用于智能匹配已有剧集
+                        const mediaExtensions = ['.mkv', '.mp4', '.avi', '.rmvb', '.wmv', '.m2ts', '.ts', '.flv', '.mov', '.iso', '.mpg', '.rm'];
+                        const getBaseNameWithoutExt = (name) => {
+                            for (const ext of mediaExtensions) {
+                                if (name.toLowerCase().endsWith(ext)) return name.slice(0, -ext.length);
+                            }
+                            return name;
+                        };
+                        const existingBaseNames = new Set(
+                            folderFilesAfter.filter(f => !CasUtils.isCasFile(f.name)).map(f => getBaseNameWithoutExt(f.name))
+                        );
                         const currentFileNames = new Set(folderFilesAfter.filter(f => !CasUtils.isCasFile(f.name)).map(f => f.name));
                         const savedCasFiles = folderFilesAfter.filter(f => CasUtils.isCasFile(f.name));
 
-                        for (const casFile of newCasFiles) {
+                        // ====== 并发处理 CAS 文件 ======
+                        logTaskEvent(`[CAS] 开始并发秒传，并发数: ${casConcurrentLimit}`);
+                        const processCasFile = async (casFile) => {
+                            const result = { casFile, savedFile: null, realFileName: null, success: false, message: '', familyFileIdForCleanup: null };
                             try {
                                 // 在目标目录中找到同名文件
                                 const savedFile = savedCasFiles.find(f => f.name === casFile.name);
                                 if (!savedFile) {
-                                    logTaskEvent(`[CAS] 转存后未找到: ${casFile.name}`);
-                                    failedShareFileIds.add(String(casFile.id));
-                                    continue;
+                                    result.message = '转存后未找到';
+                                    return result;
                                 }
+                                result.savedFile = savedFile;
 
                                 // 下载 CAS 文件内容
                                 const content = await cloud189.downloadFileContent(savedFile.id);
                                 const parsed = CasUtils.parseCasContent(content);
 
-                                if (parsed && parsed.md5 && parsed.slice_md5) {
-                                    const realFileName = CasUtils.mergeCasFileName(casFile.name, parsed.name);
-                                    // 检查是否已存在同名文件（先转存的视频优先，秒传后重复则删除秒传文件）
-                                    if (currentFileNames.has(realFileName)) {
-                                        logTaskEvent(`[CAS] ${realFileName} 已存在（常规转存优先），跳过秒传`);
-                                        savedCasFileIds.push(savedFile.id);
-                                        continue;
-                                    }
-                                    // ====== 家庭中转 or 个人接口秒传 ======
-                                    let uploadResult = { success: false, message: '未执行' };
-                                    let familyFileIdForCleanup = null;
+                                if (!parsed || !parsed.md5 || !parsed.slice_md5) {
+                                    result.message = '解析失败: 缺少 md5 或 slice_md5';
+                                    return result;
+                                }
 
-                                    if (enableCasFamilyTransfer) {
-                                        // --- 尝试家庭接口 ---
-                                        logTaskEvent(`[CAS] 尝试家庭空间中转秒传: ${realFileName}`);
-                                        // 懒加载家庭信息（整个任务执行只获取一次）
-                                        if (!this._casFamilyInfo) {
-                                            this._casFamilyInfo = await cloud189.getFamilyInfo();
-                                            if (!this._casFamilyInfo) {
-                                                logTaskEvent('[家庭中转] 当前账号无家庭空间主账号，无法进入家庭中转');
-                                            } else {
-                                                logTaskEvent(`[家庭中转] 家庭ID: ${this._casFamilyInfo.familyId}`);
-                                            }
-                                        }
+                                const realFileName = CasUtils.mergeCasFileName(casFile.name, parsed.name);
+                                result.realFileName = realFileName;
+
+                                // 检查是否已存在同名文件（去后缀匹配，支持不同格式）
+                                const realBaseName = getBaseNameWithoutExt(realFileName);
+                                if (existingBaseNames.has(realBaseName) || currentFileNames.has(realFileName)) {
+                                    result.message = '已存在（去后缀匹配），跳过秒传';
+                                    result.success = true; // 标记成功但不执行秒传
+                                    return result;
+                                }
+
+                                // ====== 家庭中转 or 个人接口秒传 ======
+                                let uploadResult = { success: false, message: '未执行' };
+
+                                if (enableCasFamilyTransfer) {
+                                    logTaskEvent(`[CAS] 并发处理: ${realFileName} - 家庭中转秒传`);
+                                    // 懒加载家庭信息
+                                    if (!this._casFamilyInfo) {
+                                        this._casFamilyInfo = await cloud189.getFamilyInfo();
                                         if (this._casFamilyInfo) {
-                                            const familyId = this._casFamilyInfo.familyId;
-                                            // 解析目标目录：优先用设置中指定的，否则自动获取根目录
-                                            let familyFolderId = casFamilyFolderIdCfg;
-                                            if (!familyFolderId) {
-                                                if (!this._casFamilyRootFolderId) {
-                                                    this._casFamilyRootFolderId = await cloud189.getFamilyRootFolderId(familyId);
-                                                }
-                                                familyFolderId = this._casFamilyRootFolderId;
-                                            }
-                                            logTaskEvent(`[家庭中转] 家庭秒传目录ID: ${familyFolderId || '根目录'}`);
-
-                                            // Step A: 家庭空间秒传
-                                            const familyResult = await cloud189.familyRapidUpload(
-                                                realFileName, parseInt(parsed.size),
-                                                parsed.md5.toUpperCase(), parsed.slice_md5.toUpperCase(),
-                                                familyId, familyFolderId
-                                            );
-
-                                            if (familyResult.success && familyResult.familyFileId) {
-                                                familyFileIdForCleanup = familyResult.familyFileId;
-                                                // Step B: 将家庭文件转存到个人目标目录
-                                                logTaskEvent(`[家庭中转] 家庭秒传成功，开始转存到个人目录(${task.realFolderId})`);
-                                                const saveResult = await cloud189.saveFamilyFileToPersonal(
-                                                    familyId, familyResult.familyFileId, task.realFolderId, familyFolderId, realFileName
-                                                );
-                                                if (saveResult.success) {
-                                                    uploadResult = { success: true, userFileId: familyResult.familyFileId, message: '家庭中转秒传成功' };
-                                                    logTaskEvent(`[家庭中转] ✅ 完整流程成功: ${casFile.name} → ${realFileName}`);
-                                                } else {
-                                                    logTaskEvent(`[家庭中转] 转存到个人空间失败: ${saveResult.message}，降级到个人接口`);
-                                                }
-                                            } else {
-                                                logTaskEvent(`[家庭中转] 家庭秒传失败: ${familyResult.message}，降级到个人接口`);
-                                            }
+                                            logTaskEvent(`[家庭中转] 家庭ID: ${this._casFamilyInfo.familyId}`);
                                         }
                                     }
+                                    if (this._casFamilyInfo) {
+                                        const familyId = this._casFamilyInfo.familyId;
+                                        let familyFolderId = casFamilyFolderIdCfg;
+                                        if (!familyFolderId) {
+                                            if (!this._casFamilyRootFolderId) {
+                                                this._casFamilyRootFolderId = await cloud189.getFamilyRootFolderId(familyId);
+                                            }
+                                            familyFolderId = this._casFamilyRootFolderId;
+                                        }
 
-                                    // --- 个人接口秒传（仅当未启用家庭中转时执行） ---
-                                    if (!uploadResult.success && !enableCasFamilyTransfer) {
-                                        logTaskEvent(`[CAS秒传] 执行个人接口秒传: ${realFileName}`);
-                                        uploadResult = await cloud189.rapidUpload(
+                                        const familyResult = await cloud189.familyRapidUpload(
                                             realFileName, parseInt(parsed.size),
                                             parsed.md5.toUpperCase(), parsed.slice_md5.toUpperCase(),
-                                            task.realFolderId
+                                            familyId, familyFolderId
                                         );
-                                    }
 
-                                    // --- 处理结果 ---
-                                    if (uploadResult.success) {
-                                        casResults.push({ fileName: realFileName, success: true });
-                                        logTaskEvent(`[CAS秒传] 成功: ${casFile.name} → ${realFileName}`);
-                                        currentFileNames.add(realFileName);
-                                        newFiles.push({});
-                                        // 记录 .cas 文件 ID 以便删除（仅当成功且文件存在时）
-                                        if (savedFile && savedFile.id) { savedCasFileIds.push(savedFile.id); }
-                                        // Step C: 可选清理家庭临时文件
-                                        if (enableDeleteFamilyTempFile && familyFileIdForCleanup && this._casFamilyInfo) {
-                                            logTaskEvent(`[家庭中转] 清理家庭空间临时文件: ${familyFileIdForCleanup}`);
-                                            await cloud189.deleteFamilyFile(this._casFamilyInfo.familyId, familyFileIdForCleanup, realFileName);
+                                        if (familyResult.success && familyResult.familyFileId) {
+                                            result.familyFileIdForCleanup = familyResult.familyFileId;
+                                            const saveResult = await cloud189.saveFamilyFileToPersonal(
+                                                familyId, familyResult.familyFileId, task.realFolderId, familyFolderId, realFileName
+                                            );
+                                            if (saveResult.success) {
+                                                uploadResult = { success: true, message: '家庭中转秒传成功' };
+                                                logTaskEvent(`[家庭中转] ✅ ${realFileName} 完成`);
+                                            } else {
+                                                logTaskEvent(`[家庭中转] ${realFileName} 转存失败: ${saveResult.message}`);
+                                            }
+                                        } else {
+                                            logTaskEvent(`[家庭中转] ${realFileName} 秒传失败: ${familyResult.message}`);
                                         }
-                                    } else {
-                                        casResults.push({ fileName: realFileName, success: false, reason: uploadResult.message });
-                                        logTaskEvent(`[CAS秒传] 失败: ${casFile.name} → ${realFileName}: ${uploadResult.message}`);
-                                        failedShareFileIds.add(String(casFile.id));
                                     }
+                                }
 
-                                    // Step C: 清理家庭空间临时文件
-                                    if (enableDeleteFamilyTempFile && familyFileIdForCleanup && this._casFamilyInfo) {
-                                        logTaskEvent(`[家庭中转] 清理家庭空间临时文件: ${familyFileIdForCleanup}`);
-                                        await cloud189.deleteFamilyFile(this._casFamilyInfo.familyId, familyFileIdForCleanup, realFileName);
-                                        
-                                        // 立即清空家庭回收站，彻底释放空间
+                                // 个人接口秒传（仅当未启用家庭中转时）
+                                if (!uploadResult.success && !enableCasFamilyTransfer) {
+                                    logTaskEvent(`[CAS秒传] 并发处理: ${realFileName} - 个人接口秒传`);
+                                    uploadResult = await cloud189.rapidUpload(
+                                        realFileName, parseInt(parsed.size),
+                                        parsed.md5.toUpperCase(), parsed.slice_md5.toUpperCase(),
+                                        task.realFolderId
+                                    );
+                                    if (uploadResult.success) {
+                                        logTaskEvent(`[CAS秒传] ✅ ${realFileName} 完成`);
+                                    }
+                                }
+
+                                result.success = uploadResult.success;
+                                result.message = uploadResult.success ? '秒传成功' : uploadResult.message;
+                            } catch (error) {
+                                result.message = error.message;
+                                logTaskEvent(`[CAS] ${casFile.name} 处理异常: ${error.message}`);
+                            }
+                            return result;
+                        };
+
+                        // 分批并发处理
+                        for (let i = 0; i < newCasFiles.length; i += casConcurrentLimit) {
+                            const batch = newCasFiles.slice(i, i + casConcurrentLimit);
+                            const batchNum = Math.floor(i / casConcurrentLimit) + 1;
+                            const totalBatches = Math.ceil(newCasFiles.length / casConcurrentLimit);
+                            logTaskEvent(`[CAS] 处理第 ${batchNum}/${totalBatches} 批，共 ${batch.length} 个文件`);
+
+                            const batchResults = await Promise.allSettled(batch.map(processCasFile));
+
+                            // 处理批次结果
+                            for (const settleResult of batchResults) {
+                                if (settleResult.status === 'fulfilled') {
+                                    const r = settleResult.value;
+                                    if (r.savedFile) {
+                                        savedCasFileIds.push(r.savedFile.id);
+                                    }
+                                    if (r.realFileName) {
+                                        // 更新已存在文件集合（防止后续批次重复）
+                                        existingBaseNames.add(getBaseNameWithoutExt(r.realFileName));
+                                        currentFileNames.add(r.realFileName);
+                                    }
+                                    if (r.success && r.realFileName) {
+                                        casResults.push({ fileName: r.realFileName, success: true });
+                                        newFiles.push({});
+                                    } else if (!r.success && r.casFile) {
+                                        failedShareFileIds.add(String(r.casFile.id));
+                                    }
+                                    // 清理家庭临时文件
+                                    if (enableDeleteFamilyTempFile && r.familyFileIdForCleanup && this._casFamilyInfo) {
                                         try {
-                                            logTaskEvent(`[家庭中转] 正在清空家庭回收站以彻底释放配额...`);
-                                            await cloud189.request('/api/open/batch/createBatchTask.action', {
-                                                method: 'POST',
-                                                form: {
-                                                    type: 'EMPTY_RECYCLE',
-                                                    taskInfos: '[]',
-                                                    familyId: String(this._casFamilyInfo.familyId)
-                                                }
-                                            });
-                                        } catch (err) {
-                                            logTaskEvent(`[家庭中转] 清空家庭回收站失败: ${err.message}`);
+                                            await cloud189.deleteFamilyFile(this._casFamilyInfo.familyId, r.familyFileIdForCleanup, r.realFileName);
+                                        } catch (e) {
+                                            logTaskEvent(`[家庭中转] 清理临时文件失败: ${e.message}`);
                                         }
                                     }
                                 } else {
-                                    logTaskEvent(`[CAS] ${casFile.name} 解析失败: 缺少 md5 或 slice_md5`);
-                                    failedShareFileIds.add(String(casFile.id));
+                                    logTaskEvent(`[CAS] 并发处理异常: ${settleResult.reason?.message || settleResult.reason}`);
                                 }
-                                // 记录 .cas 文件 ID 以便后续删除
-                                savedCasFileIds.push(savedFile.id);
-                            } catch (error) {
-                                logTaskEvent(`[CAS] ${casFile.name} 处理异常: ${error.message}`);
-                                failedShareFileIds.add(String(casFile.id));
                             }
-                            await new Promise(resolve => setTimeout(resolve, 1000));
+
+                            // 批次间短暂延迟，避免 API 限流
+                            if (i + casConcurrentLimit < newCasFiles.length) {
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            }
+                        }
+
+                        // 清空家庭回收站（批量清理后统一执行）
+                        if (enableDeleteFamilyTempFile && this._casFamilyInfo) {
+                            try {
+                                logTaskEvent(`[家庭中转] 清空家庭回收站释放配额...`);
+                                await cloud189.request('/api/open/batch/createBatchTask.action', {
+                                    method: 'POST',
+                                    form: {
+                                        type: 'EMPTY_RECYCLE',
+                                        taskInfos: '[]',
+                                        familyId: String(this._casFamilyInfo.familyId)
+                                    }
+                                });
+                            } catch (err) {
+                                logTaskEvent(`[家庭中转] 清空家庭回收站失败: ${err.message}`);
+                            }
                         }
 
                         // 第2.3步: 根据配置决定是否删除已转存的 .cas 文件
