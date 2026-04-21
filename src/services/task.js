@@ -1199,16 +1199,27 @@ class TaskService {
                         taskRepo: this.taskRepo
                     }));
                 })
-            } else if (task.lastFileUpdateTime) {
-                // 检查是否超过3天没有新文件
-                const now = new Date();
-                const lastUpdate = new Date(task.lastFileUpdateTime);
-                const daysDiff = (now.getTime() - lastUpdate.getTime()) / (1000 * 60 * 60 * 24);
-                if (daysDiff >= ConfigService.getConfigValue('task.taskExpireDays')) {
-                    task.status = 'completed';
+            } else {
+                // 无新增文件的情况
+                // 1. 如果有历史记录，检查是否过期
+                if (task.lastFileUpdateTime) {
+                    const now = new Date();
+                    const lastUpdate = new Date(task.lastFileUpdateTime);
+                    const daysDiff = (now.getTime() - lastUpdate.getTime()) / (1000 * 60 * 60 * 24);
+                    if (daysDiff >= ConfigService.getConfigValue('task.taskExpireDays')) {
+                        task.status = 'completed';
+                    }
+                    task.currentEpisodes = existingMediaCount;
+                    logTaskEvent(`${task.resourceName} 没有增量剧集`);
+                } else {
+                    // 2. 首次执行/清缓存后执行，但文件都已存在
+                    // 需要正确初始化任务状态
+                    task.status = 'processing';
+                    task.lastFileUpdateTime = new Date();
+                    task.currentEpisodes = existingMediaCount;
+                    task.retryCount = 0;
+                    logTaskEvent(`${task.resourceName} 首次检查完成，已有 ${existingMediaCount} 集`);
                 }
-                task.currentEpisodes = existingMediaCount;
-                logTaskEvent(`${task.resourceName} 没有增量剧集`)
             }
             // 检查是否达到总数
             if (task.totalEpisodes && task.currentEpisodes >= task.totalEpisodes) {
