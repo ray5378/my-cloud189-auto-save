@@ -1405,6 +1405,8 @@ class TaskService {
             logTaskEvent(`任务[${task.resourceName}]资源链接或源目录已变更，已重置追更进度并清空任务缓存`);
         }
         const newTask = await this.taskRepo.save(task)
+        // 调试日志：追踪保存后的状态
+        logTaskEvent(`[DEBUG] 保存后 lastFileUpdateTime=${newTask.lastFileUpdateTime}, shouldResetProgress=${shouldResetProgress}`);
         SchedulerService.removeTaskJob(task.id)
         if (task.enableCron && task.cronExpression) {
             SchedulerService.saveTaskJob(newTask, this)
