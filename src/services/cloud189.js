@@ -941,6 +941,28 @@ class Cloud189Service {
         throw new Error('无法获取家庭会话密钥（familySessionKey/familySessionSecret），请检查账号是否有家庭空间');
     }
 
+    /**
+     * 强制刷新家庭会话密钥（每N个请求后调用，避免403限流）
+     * 天翼云盘家庭接口有请求次数限制，每4个请求后密钥可能失效
+     */
+    async refreshFamilySessionKeys() {
+        // 清空缓存，强制重新获取
+        this._familySessionKey = null;
+        this._familySessionSecret = null;
+
+        // 强制刷新 SDK session（可能需要重新登录获取新密钥）
+        try {
+            this.client.session.accessToken = '';
+            this.client.session.sessionKey = '';
+            this.client.forceRefresh = true;
+        } catch (e) {
+            logTaskEvent(`[家庭中转] 刷新SDK session: ${e.message}`);
+        }
+
+        logTaskEvent(`[家庭中转] 强制刷新家庭会话密钥`);
+        return await this._getFamilySessionKeys();
+    }
+
     // 获取 RSA 公钥（缓存5分钟）
     async _getRsaKey() {
         const now = Date.now();

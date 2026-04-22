@@ -1034,7 +1034,7 @@ class TaskService {
                                     let uploadResult = { success: false, message: '未执行' };
 
                                     if (enableCasFamilyTransfer) {
-                                        logTaskEvent(`[CAS] 并发处理: ${realFileName} - 家庭中转秒传`);
+                                        logTaskEvent(`[CAS] 串行处理: ${realFileName} - 家庭中转秒传`);
 
                                         // 多账号家庭中转支持：优先使用任务指定的家庭账号
                                         let familyCloud189 = cloud189;
@@ -1112,7 +1112,7 @@ class TaskService {
 
                                     // 个人接口秒传（仅当未启用家庭中转时）
                                     if (!uploadResult.success && !enableCasFamilyTransfer) {
-                                        logTaskEvent(`[CAS秒传] 并发处理: ${realFileName} - 个人接口秒传`);
+                                        logTaskEvent(`[CAS秒传] 串行处理: ${realFileName} - 个人接口秒传`);
                                         uploadResult = await cloud189.rapidUpload(
                                             realFileName, parseInt(parsed.size),
                                             parsed.md5.toUpperCase(), parsed.slice_md5.toUpperCase(),
@@ -1133,7 +1133,7 @@ class TaskService {
                             };
 
                             // ====== 串行处理（避免403限流）======
-                            logTaskEvent(`[CAS] 开始串行处理 ${finalCasFilesToTransfer.length} 个文件，间隔 1000ms`);
+                            logTaskEvent(`[CAS] 开始串行处理 ${finalCasFilesToTransfer.length} 个文件，每3个刷新会话密钥`);
 
                             // 统计计数器
                             let completedCount = 0;
@@ -1169,6 +1169,12 @@ class TaskService {
                                         }
                                     }
 
+                                    // 每3个文件刷新家庭会话密钥（避免请求次数限制导致403）
+                                    if (enableCasFamilyTransfer && completedCount % 3 === 0 && familyCloud189) {
+                                        logTaskEvent(`[家庭中转] 已处理 ${completedCount} 个文件，刷新会话密钥...`);
+                                        await familyCloud189.refreshFamilySessionKeys();
+                                    }
+
                                     // 每处理10个输出一次进度
                                     if (completedCount % 10 === 0 || completedCount === finalCasFilesToTransfer.length) {
                                         logTaskEvent(`[CAS] 进度 ${completedCount}/${finalCasFilesToTransfer.length}，成功 ${successCount}，跳过 ${skippedCount}，失败 ${failedCount}`);
@@ -1180,7 +1186,7 @@ class TaskService {
                                     failedShareFileIds.add(String(casFile.id));
                                 }
 
-                                // 等待 1000ms 再处理下一个文件（避免连续请求触发403）
+                                // 等待 1000ms 再处理下一个文件
                                 await new Promise(resolve => setTimeout(resolve, 1000));
                             }
 
