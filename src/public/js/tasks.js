@@ -516,20 +516,22 @@ function initTaskForm() {
                 document.getElementById('taskForm').reset();
                 document.getElementById('targetFolderId').value = body.targetFolderId;
                 const ids = data.data.map(item => item.id);
-                // 串行执行任务，避免多任务并发导致总并发超限（家庭接口限流）
-                for (const id of ids) {
-                    await executeTask(id, false);
-                }
-                message.success('任务创建完成, 正在执行中, 请稍后查看结果');
-                setTimeout(() => {
-                    fetchTasks(); 
-                }, 2500);
+
+                // 先关闭弹窗和显示成功消息，5秒后开始执行任务
                 closeCreateTaskModal();
-                // 触发任务页签的切换 .tab且data-tab='tasks'
+                message.success('任务创建完成，5秒后开始执行');
                 const tasksTab = document.querySelector('.tab[data-tab="tasks"]');
                 if (tasksTab) {
                     tasksTab.click();
                 }
+
+                // 5秒后串行执行任务
+                setTimeout(async () => {
+                    for (const id of ids) {
+                        await executeTask(id, false);
+                    }
+                    fetchTasks();
+                }, 5000);
             } else {
                 if (data.error == 'folder already exists') {
                     if (confirm('该目录已经存在, 确定要覆盖吗?')) {

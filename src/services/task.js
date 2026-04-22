@@ -837,7 +837,6 @@ class TaskService {
             const enableCasFamilyTransfer = ConfigService.getConfigValue('task.enableCasFamilyTransfer');
             const casFamilyFolderIdCfg = ConfigService.getConfigValue('task.casFamilyFolderId') || '';
             const enableDeleteFamilyTempFile = ConfigService.getConfigValue('task.enableDeleteFamilyTempFile');
-            const casConcurrentLimit = ConfigService.getConfigValue('task.casConcurrentLimit') || 5;
 
             // 家庭中转临时目录ID（如果使用根目录，会自动创建临时目录）
             let casFamilyFolderIdActual = casFamilyFolderIdCfg;
@@ -997,8 +996,8 @@ class TaskService {
                             const currentFileNamesAfter = new Set(folderFilesAfter.filter(f => !CasUtils.isCasFile(f.name)).map(f => f.name));
                             const savedCasFiles = folderFilesAfter.filter(f => CasUtils.isCasFile(f.name));
 
-                            // ====== 并发处理 CAS 文件 ======
-                            logTaskEvent(`[CAS] 开始并发秒传，并发数: ${casConcurrentLimit}`);
+                            // ====== 串行处理 CAS 文件 ======
+                            logTaskEvent(`[CAS] 开始串行秒传`);
                             const processCasFile = async (casFile) => {
                                 const result = { casFile, savedFile: null, realFileName: null, success: false, message: '', familyFileIdForCleanup: null };
                                 try {
@@ -1114,8 +1113,8 @@ class TaskService {
                                 return result;
                             };
 
-                            // ====== 滑动窗口并发处理 ======
-                            logTaskEvent(`[CAS] 开始处理 ${finalCasFilesToTransfer.length} 个文件，并发数 ${casConcurrentLimit}`);
+                            // ====== 串行处理（避免403限流）======
+                            logTaskEvent(`[CAS] 开始串行处理 ${finalCasFilesToTransfer.length} 个文件，间隔 1000ms`);
 
                             // 统计计数器
                             let completedCount = 0;
@@ -1123,19 +1122,9 @@ class TaskService {
                             let skippedCount = 0;
                             let failedCount = 0;
 
-                            // 滑动窗口并发池
-                            const pool = [];
-                            const runningTasks = new Set();
-
                             for (const casFile of finalCasFilesToTransfer) {
-                                // 等待池中有空位
-                                while (runningTasks.size >= casConcurrentLimit) {
-                                    await Promise.race(pool.filter(p => runningTasks.has(p)));
-                                }
-
-                                // 创建任务
-                                const taskPromise = processCasFile(casFile).then(result => {
-                                    runningTasks.delete(taskPromise);
+                                try {
+                                    const result = await processCasFile(casFile);
 
                                     // 处理结果
                                     if (result.savedFile) {
@@ -1161,28 +1150,20 @@ class TaskService {
                                         }
                                     }
 
-                                    // 不再逐个清理家庭临时文件，最后统一清空目录
-
                                     // 每处理10个输出一次进度
                                     if (completedCount % 10 === 0 || completedCount === finalCasFilesToTransfer.length) {
                                         logTaskEvent(`[CAS] 进度 ${completedCount}/${finalCasFilesToTransfer.length}，成功 ${successCount}，跳过 ${skippedCount}，失败 ${failedCount}`);
                                     }
-
-                                    return result;
-                                }).catch(error => {
-                                    runningTasks.delete(taskPromise);
+                                } catch (error) {
                                     completedCount++;
                                     failedCount++;
                                     logTaskEvent(`[CAS] ❌ ${casFile.name} - 异常: ${error.message}`);
                                     failedShareFileIds.add(String(casFile.id));
-                                });
+                                }
 
-                                pool.push(taskPromise);
-                                runningTasks.add(taskPromise);
+                                // 等待 1000ms 再处理下一个文件（避免连续请求触发403）
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             }
-
-                            // 等待所有任务完成
-                            await Promise.all(pool);
 
                             // 最终统计
                             logTaskEvent(`[CAS] 处理完成，成功 ${successCount}，跳过 ${skippedCount}，失败 ${failedCount}`);

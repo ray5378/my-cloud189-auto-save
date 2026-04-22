@@ -23,7 +23,6 @@ async function loadSettings() {
             document.getElementById('enableCasFamilyTransfer').checked = settings.task?.enableCasFamilyTransfer ?? true;
             document.getElementById('casFamilyFolderId').value = settings.task?.casFamilyFolderId || '';
             document.getElementById('enableDeleteFamilyTempFile').checked = settings.task?.enableDeleteFamilyTempFile || false;
-            document.getElementById('casConcurrentLimit').value = settings.task?.casConcurrentLimit || 1;
 
             // 企业微信设置
             document.getElementById('enableWecom').checked = settings.wecom?.enable || false;
@@ -136,8 +135,7 @@ async function saveSettings() {
             enableDeleteCasFile: document.getElementById('enableDeleteCasFile').checked,
             enableCasFamilyTransfer: document.getElementById('enableCasFamilyTransfer').checked,
             casFamilyFolderId: document.getElementById('casFamilyFolderId').value.trim(),
-            enableDeleteFamilyTempFile: document.getElementById('enableDeleteFamilyTempFile').checked,
-            casConcurrentLimit: parseInt(document.getElementById('casConcurrentLimit').value) || 5
+            enableDeleteFamilyTempFile: document.getElementById('enableDeleteFamilyTempFile').checked
         },
         wecom: {
             enable: document.getElementById('enableWecom').checked,
