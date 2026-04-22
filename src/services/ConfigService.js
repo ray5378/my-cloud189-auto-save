@@ -23,7 +23,7 @@ class ConfigService {
         enableCasFamilyTransfer: true,  // 启用家庭空间中转秒传（默认开启，失败则降级到个人接口）
         casFamilyFolderId: '',          // 家庭空间中转目录ID，空字符串表示自动创建临时目录
         enableDeleteFamilyTempFile: true, // 秒传完成后清空家庭中转目录并释放配额
-        casConcurrentLimit: 1,            // CAS 秒传并发数，默认1个（串行），可手动调整
+        casConcurrentLimit: 5,            // CAS 秒传并发数，默认5个，推荐范围3-5
       },
       wecom: {
         enable: false,
