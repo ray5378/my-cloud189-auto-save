@@ -9,6 +9,46 @@ const taskTmdbPending = new Set();
 let mediaWallTasksSnapshot = [];
 let mediaWallRefreshTimer = null;
 
+// TMDB缓存存储键名
+const TMDB_CACHE_KEY = 'taskTmdbCache_v1';
+const TMDB_CACHE_EXPIRE_DAYS = 7; // 缓存7天过期
+
+// 从localStorage加载TMDB缓存
+function loadTmdbCacheFromStorage() {
+    try {
+        const stored = localStorage.getItem(TMDB_CACHE_KEY);
+        if (stored) {
+            const data = JSON.parse(stored);
+            const now = Date.now();
+            // 过滤过期缓存
+            Object.entries(data).forEach(([taskId, entry]) => {
+                if (entry.timestamp && (now - entry.timestamp) < TMDB_CACHE_EXPIRE_DAYS * 24 * 60 * 60 * 1000) {
+                    taskTmdbCache.set(parseInt(taskId), entry.data);
+                }
+            });
+        }
+    } catch (e) {
+        console.warn('加载TMDB缓存失败:', e);
+    }
+}
+
+// 保存TMDB缓存到localStorage
+function saveTmdbCacheToStorage() {
+    try {
+        const data = {};
+        const now = Date.now();
+        taskTmdbCache.forEach((value, key) => {
+            data[key] = { data: value, timestamp: now };
+        });
+        localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(data));
+    } catch (e) {
+        console.warn('保存TMDB缓存失败:', e);
+    }
+}
+
+// 页面加载时初始化缓存
+loadTmdbCacheFromStorage();
+
 
 // 任务相关功能
 function createProgressRing(current, total) {
@@ -163,6 +203,7 @@ async function enrichTaskTmdb(task) {
         if (detail) {
             taskTmdbCache.set(task.id, detail);
             task.tmdbContent = JSON.stringify(detail);
+            saveTmdbCacheToStorage();  // 持久化缓存到localStorage
             scheduleMediaWallRefresh();
         }
     } catch (error) {
