@@ -1940,16 +1940,28 @@ class TaskService {
         }
         // 如果status == 2 说明有冲突
         if (task.taskStatus == 2) {
+            logTaskEvent(`[批量任务] 检测到冲突，taskId: ${taskId}，尝试获取冲突信息...`);
             const conflictTaskInfo = await cloud189.getConflictTaskInfo(taskId);
+            logTaskEvent(`[批量任务] 冲突信息返回: ${JSON.stringify(conflictTaskInfo)}`);
             if (!conflictTaskInfo) {
+                logTaskEvent(`[批量任务] 获取冲突信息失败，返回null`);
                 return false
             }
             // 忽略冲突
             const taskInfos = conflictTaskInfo.taskInfos;
+            logTaskEvent(`[批量任务] 原始taskInfos: ${JSON.stringify(taskInfos)}`);
             for (const taskInfo of taskInfos) {
                 taskInfo.dealWay = 1;
             }
-            await cloud189.manageBatchTask(taskId, conflictTaskInfo.targetFolderId, taskInfos);
+            logTaskEvent(`[批量任务] 处理后taskInfos: ${JSON.stringify(taskInfos)}`);
+            logTaskEvent(`[批量任务] 调用manageBatchTask参数: taskId=${taskId}, targetFolderId=${conflictTaskInfo.targetFolderId}, taskInfos=${JSON.stringify(taskInfos)}`);
+            try {
+                const manageResult = await cloud189.manageBatchTask(taskId, conflictTaskInfo.targetFolderId, taskInfos);
+                logTaskEvent(`[批量任务] manageBatchTask返回: ${JSON.stringify(manageResult)}`);
+            } catch (manageError) {
+                logTaskEvent(`[批量任务] manageBatchTask失败: ${manageError.message}`);
+                return false;
+            }
             await new Promise(resolve => setTimeout(resolve, 200));
             return await this.checkTaskStatus(cloud189, taskId, count++, batchTaskDto)
         }
