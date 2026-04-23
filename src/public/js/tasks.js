@@ -11,20 +11,15 @@ let mediaWallRefreshTimer = null;
 
 // TMDB缓存存储键名
 const TMDB_CACHE_KEY = 'taskTmdbCache_v1';
-const TMDB_CACHE_EXPIRE_DAYS = 7; // 缓存7天过期
 
-// 从localStorage加载TMDB缓存
+// 从localStorage加载TMDB缓存（无过期机制，除非手动删除任务）
 function loadTmdbCacheFromStorage() {
     try {
         const stored = localStorage.getItem(TMDB_CACHE_KEY);
         if (stored) {
             const data = JSON.parse(stored);
-            const now = Date.now();
-            // 过滤过期缓存
             Object.entries(data).forEach(([taskId, entry]) => {
-                if (entry.timestamp && (now - entry.timestamp) < TMDB_CACHE_EXPIRE_DAYS * 24 * 60 * 60 * 1000) {
-                    taskTmdbCache.set(parseInt(taskId), entry.data);
-                }
+                taskTmdbCache.set(parseInt(taskId), entry.data);
             });
         }
     } catch (e) {
@@ -36,14 +31,19 @@ function loadTmdbCacheFromStorage() {
 function saveTmdbCacheToStorage() {
     try {
         const data = {};
-        const now = Date.now();
         taskTmdbCache.forEach((value, key) => {
-            data[key] = { data: value, timestamp: now };
+            data[key] = { data: value };
         });
         localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(data));
     } catch (e) {
         console.warn('保存TMDB缓存失败:', e);
     }
+}
+
+// 删除单个任务的TMDB缓存
+function removeTmdbCache(taskId) {
+    taskTmdbCache.delete(taskId);
+    saveTmdbCacheToStorage();
 }
 
 // 页面加载时初始化缓存
@@ -358,6 +358,7 @@ async function fetchTasks() {
     loading.hide()
     const data = await response.json();
     if (data.success) {
+        removeTmdbCache(id);  // 删除任务的TMDB缓存
         message.success('任务删除成功');
         fetchTasks();
     } else {
