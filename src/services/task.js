@@ -978,8 +978,11 @@ class TaskService {
                             });
                             await this.createBatchTask(cloud189, casBatchTask);
                             logTaskEvent(`[CAS] ${finalCasFilesToTransfer.length} 个 CAS 文件转存完成`);
-                            // 等待转存生效
-                            await new Promise(resolve => setTimeout(resolve, 2000));
+                            // 批量任务完成后等待更长时间，让API频率限制冷却
+                            // 批量任务API和家庭秒传API共享频率限制池，需要足够长的等待
+                            const BATCH_TO_RAPID_DELAY = 15000; // 15秒
+                            logTaskEvent(`[CAS] 批量转存完成，等待${BATCH_TO_RAPID_DELAY/1000}秒让API限制冷却...`);
+                            await new Promise(resolve => setTimeout(resolve, BATCH_TO_RAPID_DELAY));
                         } catch (error) {
                             logTaskEvent(`[CAS] 转存 CAS 文件失败: ${error.message}`);
                         }
