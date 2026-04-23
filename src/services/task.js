@@ -1075,6 +1075,13 @@ class TaskService {
                                         if (saveResult.success) {
                                             uploadResult = { success: true, message: '家庭中转秒传成功' };
                                             logTaskEvent(`[家庭中转] ✅ ${realFileName} 完成`);
+                                            // 立即删除家庭临时文件，释放配额！
+                                            try {
+                                                await familyCloud189.deleteFamilyFile(this._casFamilyInfo.familyId, familyResult.familyFileId);
+                                                logTaskEvent(`[家庭中转] 已清理临时文件，释放配额`);
+                                            } catch (e) {
+                                                logTaskEvent(`[家庭中转] 清理临时文件失败: ${e.message}`);
+                                            }
                                         } else {
                                             uploadResult = { success: false, message: saveResult.message };
                                             logTaskEvent(`[家庭中转] ${realFileName} 转存失败: ${saveResult.message}`);
@@ -1279,7 +1286,43 @@ class TaskService {
                                 logTaskEvent(`[CAS] 清理CAS文件异常: ${e.message}`);
                             }
 
-                            // 5. 清空sessionKey让配额恢复
+                            // 5. 每批次清理家庭中转目录 + 清空家庭回收站（恢复配额的关键！）
+                            if (enableCasFamilyTransfer && this._casFamilyInfo && casFamilyFolderIdActual) {
+                                try {
+                                    // 获取家庭账号的 cloud189 实例（用于清理）
+                                    let cleanupCloud189 = familyCloud189;
+                                    if (task.casFamilyAccountId && task.casFamilyAccountId !== task.accountId) {
+                                        const familyAccount = await this.accountRepo.findOneBy({ id: task.casFamilyAccountId });
+                                        if (familyAccount) {
+                                            cleanupCloud189 = Cloud189Service.getInstance(familyAccount);
+                                        }
+                                    }
+
+                                    // 清空家庭中转目录内容（不删除目录本身）
+                                    const familyFolderId = casFamilyFolderIdActual || this._casFamilyRootFolderId;
+                                    logTaskEvent(`[家庭中转] 批次结束清理中转目录(ID: ${familyFolderId})...`);
+                                    await cleanupCloud189.clearFamilyFolder(this._casFamilyInfo.familyId, familyFolderId);
+
+                                    // 清空家庭回收站释放配额（这是恢复配额的关键！）
+                                    logTaskEvent(`[家庭中转] 批次结束清空家庭回收站...`);
+                                    await cleanupCloud189.request('/api/open/batch/createBatchTask.action', {
+                                        method: 'POST',
+                                        form: {
+                                            type: 'EMPTY_RECYCLE',
+                                            taskInfos: '[]',
+                                            familyId: String(this._casFamilyInfo.familyId)
+                                        }
+                                    });
+                                    logTaskEvent(`[家庭中转] ✅ 批次清理完成，配额已恢复`);
+
+                                    // 等待5秒确保云端清理生效
+                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                } catch (err) {
+                                    logTaskEvent(`[家庭中转] 批次清理失败: ${err.message}`);
+                                }
+                            }
+
+                            // 6. 清空sessionKey让配额恢复
                             if (enableCasFamilyTransfer && familyCloud189) {
                                 familyCloud189._sessionKey = null;
                                 familyCloud189._rsaKey = null;
@@ -2355,7 +2398,7 @@ class TaskService {
     // 校验云盘中是否存在同名目录
     async checkFolderExists(cloud189, targetFolderId, folderName, overwriteFolder = false) {
         const folderInfo = await cloud189.listFiles(targetFolderId);
-        if (!folderInfo) {
+        if (!folderInfo?.fileListAO) {
             throw new Error('获取文件列表失败');
         }
 
