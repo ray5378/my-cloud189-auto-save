@@ -327,7 +327,7 @@ class Cloud189Service {
     async familyRapidUpload(fileName, fileSize, fileMd5, sliceMd5, familyId, familyFolderId) {
         const maxRetries = 2;  // 最大重试次数
         const stepDelay = 2000;  // 步骤间延迟 2秒（应对频率限制）
-        const retryDelay = 2000;  // 403重试延迟 2秒
+        const retryDelay = 60000;  // 403重试延迟 60秒（需等待整个API限制窗口过期）
 
         try {
             const sliceSize = this._partSize(fileSize);
