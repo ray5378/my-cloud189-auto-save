@@ -1122,7 +1122,7 @@ class TaskService {
                             // ====== 自动循环处理模式 ======
                             // 2026-04-23: 家庭API限制是会话级别，每次最多成功4个秒传
                             // 采用自动循环：每批最多4个成功，达到上限后刷新会话继续下一批
-                            const MAX_SUCCESS_PER_BATCH = 4;
+                            const MAX_SUCCESS_PER_BATCH = 3;  // 每批次最多成功秒传文件数（保险值）
                             const FILE_DELAY = 500;
                             const BATCH_INTERVAL = 1000;  // 批次间间隔1秒
 
