@@ -1,11 +1,12 @@
 ﻿// ==UserScript==
     // @name         天翼云盘秒传助手
     // @namespace    http://tampermonkey.net/
-    // @version      1.3.0
-    // @description  天翼云盘秒传助手 - 支持秒传上传、扫描CAS转存、家庭云适配与可选命名策略
+    // @version      1.4.2
+    // @description  天翼云盘秒传助手 - 支持秒传上传、扫描CAS转存、家庭接口上传、设置页与详细日志
     // @author       liyk
     // @match        https://cloud.189.cn/*
     // @match        https://m.cloud.189.cn/*
+    // @match        https://h5.cloud.189.cn/*
     // @grant        GM_xmlhttpRequest
     // @grant        GM_setValue
     // @grant        GM_getValue
@@ -21,6 +22,7 @@
     // @connect      cloudcube.telecomjs.com
     // @connect      cloudcube.wuxi.cn
     // @connect      mini189.cn
+    // @connect      h5.cloud.189.cn
     // @connect      *
     // @run-at       document-end
     // ==/UserScript==
@@ -38,7 +40,8 @@
             activeTab: 'cloud189_active_tab',
             deleteCasAfterUpload: 'cloud189_delete_cas_after_upload',
             familyRequestContext: 'cloud189_family_request_context',
-            renameByCasFileName: 'cloud189_rename_by_cas_filename'
+            renameByCasFileName: 'cloud189_rename_by_cas_filename',
+            forceFamilyUpload: 'cloud189_force_family_upload'
         };
 
         // ============== 工具函数 ==============
@@ -426,36 +429,60 @@
                 this.familyRootFolderId = null;
                 this.parentFolderId = '-11';
                 this.familyRequestContext = this.getStoredFamilyRequestContext();
+                this.activeUploadFamilyMode = false;
             }
 
             getSessionKey() {
                 if (window.__sessionKey) { this.sessionKey = window.__sessionKey; return this.sessionKey; }
-                try {
-                    const sk = sessionStorage.getItem('sessionKey');
-                    if (sk) { this.sessionKey = sk; return sk; }
-                    for (let i = 0; i < sessionStorage.length; i++) {
-                        const key = sessionStorage.key(i);
-                        if (key && key.toLowerCase().includes('sessionkey')) { const v = sessionStorage.getItem(key); if (v) { this.sessionKey = v; return v; } }
-                    }
-                } catch (e) {}
-                try {
-                    const at = localStorage.getItem('accessToken');
-                    if (at) this.accessToken = at;
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        const value = localStorage.getItem(key);
-                        if (key && key.toLowerCase().includes('accesstoken') && value) this.accessToken = value;
-                        if (value && value.includes('sessionKey')) {
-                            try { const d = JSON.parse(value); if (d.sessionKey) { this.sessionKey = d.sessionKey; return d.sessionKey; } } catch (e) {}
+                const checkStorage = (storage) => {
+                if (!storage) return null;
+
+                const priorities = ['h5_access_token', 'sessionKey', 'SESSIONKEY', 'id_token', 'accessToken'];
+                for (const k of priorities) {
+                    const val = storage.getItem(k);
+                    if (val && val.length > 10) return val;
+                }
+
+                for (let i = 0; i < storage.length; i++) {
+                    const key = storage.key(i);
+                    if (!key) continue;
+                    const kl = key.toLowerCase();
+                    if (kl.includes('sessionkey') || kl.includes('token') || kl.includes('h5_access')) {
+                        const v = storage.getItem(key);
+                        if (v && v.length > 10) {
+                             if (v.includes('{')) {
+                                 try { 
+                                    const d = JSON.parse(v); 
+                                    const token = d.h5_access_token || d.accessToken || d.sessionKey || d.id_token;
+                                    if (token) return token;
+                                 } catch(e){}
+                             }
+                             return v;
                         }
                     }
-                } catch (e) {}
+                }
+                return null;
+            };
+
+                const sk = checkStorage(sessionStorage) || checkStorage(localStorage);
+                if (sk) { 
+                    const cleanSk = typeof sk === 'string' ? sk.replace(/[\r\n]/g, '').trim() : sk;
+                    this.sessionKey = cleanSk;
+                    return cleanSk;
+                 }
+
+                // Cookie scan
                 const cookies = document.cookie.split(';').map(c => c.trim());
                 for (const cookie of cookies) {
-                    for (const name of ['SESSION_KEY', 'sessionKey', 'SESSIONKEY', 'SSON']) {
-                        if (cookie.startsWith(name + '=')) { this.sessionKey = cookie.substring(name.length + 1); return this.sessionKey; }
+                    const names = ['SESSION_KEY', 'sessionKey', 'SESSIONKEY', 'SSON', 'accessToken'];
+                    for (const name of names) {
+                         if (cookie.startsWith(name + '=')) { 
+                             const v = cookie.substring(name.length + 1); 
+                             if (v && v.length > 5) { this.sessionKey = v; return v; }
                     }
                 }
+            }
+
                 const scripts = document.querySelectorAll('script');
                 for (const script of scripts) {
                     const content = script.textContent || script.innerHTML;
@@ -466,11 +493,6 @@
                         }
                     }
                 }
-                try {
-                    const urlSk = new URLSearchParams(window.location.search).get('sessionKey');
-                    if (urlSk) { this.sessionKey = urlSk; return urlSk; }
-                } catch (e) {}
-                try { if (window.top && window.top !== window && window.top.__sessionKey) { this.sessionKey = window.top.__sessionKey; return this.sessionKey; } } catch (e) {}
                 return null;
             }
 
@@ -493,6 +515,11 @@
                 if (match) { this.parentFolderId = match[1]; return match[1]; }
                 match = window.location.hash.match(/folder[\/=]([^&\/]+)/);
                 if (match) { this.parentFolderId = match[1]; return match[1]; }
+                match = window.location.hash.match(/\/cloud\/file\/([^\/\?]+)/);
+                if (match) { 
+                     this.parentFolderId = match[1]; 
+                    return match[1]; 
+                    }
                 const fp = new URLSearchParams(window.location.search);
                 const fid = fp.get('folderId') || fp.get('currentFolderId');
                 if (fid) { this.parentFolderId = fid; return fid; }
@@ -500,30 +527,18 @@
             }
 
             isFamilySpace() {
-                return String(window.location.pathname || '').includes('/web/family');
+                 const path = String(window.location.pathname || '');
+                 return path.includes('/web/family') || path.includes('/family');
             }
 
-            shouldUseFamilyUpload() {
-                return this.isFamilySpace();
+            shouldUseFamilyUpload(forceFamilyUpload = false) {
+                return this.isFamilySpace() || forceFamilyUpload;
             }
 
             getAccessToken() {
-                if (this.accessToken) return this.accessToken;
-                try {
-                    const token = localStorage.getItem('accessToken');
-                    if (token) {
-                        this.accessToken = token;
-                        return token;
-                    }
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const key = localStorage.key(i);
-                        const value = localStorage.getItem(key);
-                        if (key && key.toLowerCase().includes('accesstoken') && value) {
-                            this.accessToken = value;
-                            return value;
-                        }
-                    }
-                } catch (e) {}
+                 if (this.accessToken) return this.accessToken;
+                 const sk = this.getSessionKey();
+                 if (sk) { this.accessToken = sk; return sk; }
                 return null;
             }
 
@@ -606,51 +621,151 @@
                 return this.familyId;
             }
 
-            async saveFamilyFileToPersonal(fileId) {
+            async saveFamilyFileToPersonal(fileId, targetFolderId = '-11', fileName = '') {
+                return await this.copyFamilyFileToPersonal(fileId, fileName, targetFolderId);
+            }
+
+            async createFamilyBatchTask(type, taskInfos, targetFolderId = '', extraParams = {}) {
                 const familyId = await this.getCurrentFamilyId();
                 if (!familyId) throw new Error('无法获取 familyId');
-                if (!fileId) throw new Error('缺少家庭文件ID');
-                const requestUrl = `${API_URL}/open/family/manage/saveFileToMember.action?familyId=${encodeURIComponent(familyId)}&fileIdList=${encodeURIComponent(fileId)}`;
-                const requestHeaders = this.buildFamilyHeaders(requestUrl);
-                Utils.logDelete('[转存到个人] 请求地址:', requestUrl);
-                Utils.logDelete('[转存到个人] 请求头:', JSON.stringify(requestHeaders));
-                const responsePayload = await new Promise((resolve, reject) => {
+
+                const requestUrl = `${API_URL}/open/batch/createBatchTask.action`;
+                const requestParams = {
+                    type,
+                    taskInfos: JSON.stringify(taskInfos),
+                    targetFolderId: targetFolderId == null ? '' : String(targetFolderId),
+                    familyId: String(familyId),
+                    ...Object.fromEntries(Object.entries(extraParams).map(([key, value]) => [key, value == null ? '' : String(value)]))
+                };
+                const requestHeaders = {
+                    ...this.buildFamilyHeaders(requestUrl, requestParams),
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                };
+                const postData = Object.entries(requestParams)
+                    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+                    .join('&');
+
+                Utils.logDelete(`[家庭批量任务:${type}] 请求地址:`, requestUrl);
+                Utils.logDelete(`[家庭批量任务:${type}] 请求头:`, JSON.stringify(requestHeaders));
+                Utils.logDelete(`[家庭批量任务:${type}] 请求体:`, postData);
+
+                const responseText = await new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
-                        method: 'GET',
+                        method: 'POST',
                         url: requestUrl,
                         headers: requestHeaders,
-                        onload: r => resolve({
-                            status: r.status,
-                            responseText: typeof r.responseText === 'string' ? r.responseText : '',
-                            response: r.response
-                        }),
-                        onerror: () => reject(new Error('转存到个人空间失败'))
+                        data: postData,
+                        onload: r => resolve(typeof r.responseText === 'string' ? r.responseText : ''),
+                        onerror: () => reject(new Error(`${type} 任务创建失败`))
                     });
                 });
-                const responseText = String(
-                    responsePayload.responseText ||
-                    (typeof responsePayload.response === 'string' ? responsePayload.response : '')
-                ).trim();
-                Utils.logDelete('[转存到个人] HTTP状态:', String(responsePayload.status));
-                Utils.logDelete('[转存到个人] 响应类型:', typeof responsePayload.responseText);
-                Utils.logDelete('[转存到个人] 原始响应:', responseText || '<empty>');
-                if (responsePayload.status < 200 || responsePayload.status >= 300) {
-                    throw new Error(`转存到个人空间失败 (HTTP ${responsePayload.status})`);
-                }
-                if (!responseText || responseText === 'undefined') {
-                    return { success: true, emptyResponse: true };
-                }
-                let result;
-                try {
-                    result = JSON.parse(responseText);
-                } catch (e) {
-                    Utils.logDelete('[转存到个人] 非JSON响应，按成功处理:', responseText);
-                    return { success: true, rawResponse: responseText };
-                }
+                Utils.logDelete(`[家庭批量任务:${type}] 原始响应:`, responseText || '<empty>');
+
+                const result = responseText.trim() ? JSON.parse(responseText) : {};
                 if ((result.res_code != null && result.res_code !== 0) || result.errorCode) {
-                    throw new Error(result.errorMsg || result.res_message || '转存到个人空间失败');
+                    throw new Error(result.errorMsg || result.res_message || `${type} 任务创建失败`);
                 }
                 return result;
+            }
+
+            async checkFamilyBatchTask(type, taskId) {
+                const requestUrl = `${API_URL}/open/batch/checkBatchTask.action`;
+                const requestParams = { type, taskId: String(taskId) };
+                const requestHeaders = {
+                    ...this.buildFamilyHeaders(requestUrl, requestParams),
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                };
+                const postData = Object.entries(requestParams)
+                    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+                    .join('&');
+
+                const responseText = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: requestUrl,
+                        headers: requestHeaders,
+                        data: postData,
+                        onload: r => resolve(typeof r.responseText === 'string' ? r.responseText : ''),
+                        onerror: () => reject(new Error(`${type} 任务状态查询失败`))
+                    });
+                });
+                Utils.logDelete(`[家庭批量任务:${type}] 状态响应:`, responseText || '<empty>');
+
+                const result = responseText.trim() ? JSON.parse(responseText) : {};
+                if ((result.res_code != null && result.res_code !== 0) || result.errorCode) {
+                    throw new Error(result.errorMsg || result.res_message || `${type} 任务状态查询失败`);
+                }
+                return result;
+            }
+
+            extractBatchTaskId(result) {
+                return result?.taskId || result?.data?.taskId || result?.taskID || result?.data?.taskID || '';
+            }
+
+            extractBatchTaskStatus(result) {
+                const raw = result?.taskStatus ?? result?.data?.taskStatus ?? result?.taskInfo?.taskStatus ?? result?.batchTask?.taskStatus;
+                return raw == null ? null : Number(raw);
+            }
+
+            async waitFamilyBatchTask(type, taskId, timeoutMs = 30000) {
+                const startedAt = Date.now();
+                while (Date.now() - startedAt < timeoutMs) {
+                    const result = await this.checkFamilyBatchTask(type, taskId);
+                    const status = this.extractBatchTaskStatus(result);
+                    const successedCount = Number(result?.successedCount ?? result?.data?.successedCount ?? 0);
+                    const failedCount = Number(result?.failedCount ?? result?.data?.failedCount ?? 0);
+                    const skipCount = Number(result?.skipCount ?? result?.data?.skipCount ?? 0);
+                    const subTaskCount = Number(result?.subTaskCount ?? result?.data?.subTaskCount ?? 0);
+
+                    if (status === 4) return result;
+                    if (subTaskCount > 0 && successedCount + failedCount + skipCount >= subTaskCount) {
+                        if (failedCount > 0) throw new Error(`${type} 任务失败，失败数量: ${failedCount}`);
+                        return result;
+                    }
+                    if (status === 2) throw new Error('目标目录存在同名文件，请先处理重名后重试');
+                    if (status != null && status < 0) throw new Error(`${type} 任务失败`);
+                    if (status != null && ![0, 1, 3, 4].includes(status)) {
+                        throw new Error(`${type} 任务失败，状态码: ${status}`);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                throw new Error(`${type} 任务等待超时`);
+            }
+
+            async copyFamilyFileToPersonal(fileId, fileName = '', targetFolderId = '-11') {
+                if (!fileId) throw new Error('缺少家庭文件ID');
+                const taskInfos = [{
+                    fileId: String(fileId),
+                    fileName: fileName || '',
+                    isFolder: 0
+                }];
+                const createResult = await this.createFamilyBatchTask('COPY', taskInfos, targetFolderId || '-11', {
+                    groupId: 'null',
+                    copyType: '2',
+                    shareId: 'null'
+                });
+                const taskId = this.extractBatchTaskId(createResult);
+                if (!taskId) throw new Error('未获取到 COPY 任务ID');
+                return await this.waitFamilyBatchTask('COPY', taskId);
+            }
+
+            async deleteFamilyFilePermanently(fileId, fileName = '', srcParentId = '') {
+                const taskInfos = [{
+                    fileId: String(fileId),
+                    fileName: fileName || '',
+                    isFolder: 0,
+                    srcParentId: String(srcParentId ?? '')
+                }];
+
+                const deleteResult = await this.createFamilyBatchTask('DELETE', taskInfos, '', {});
+                const deleteTaskId = this.extractBatchTaskId(deleteResult);
+                if (!deleteTaskId) throw new Error('未获取到 DELETE 任务ID');
+                await this.waitFamilyBatchTask('DELETE', deleteTaskId);
+
+                const clearResult = await this.createFamilyBatchTask('CLEAR_RECYCLE', taskInfos, '', {});
+                const clearTaskId = this.extractBatchTaskId(clearResult);
+                if (!clearTaskId) throw new Error('未获取到 CLEAR_RECYCLE 任务ID');
+                await this.waitFamilyBatchTask('CLEAR_RECYCLE', clearTaskId);
             }
 
             async getFamilyRootFolderId() {
@@ -672,15 +787,37 @@
             async checkLogin() { return true; }
 
             async fetchSessionKey() {
-                try {
-                    const sk = sessionStorage.getItem('sessionKey');
-                    if (sk) { this.sessionKey = sk; return sk; }
-                    const resp = await fetch(`${WEB_URL}/api/portal/getUserSizeInfo.action`, { method: 'GET', credentials: 'include' });
-                    const skh = resp.headers.get('SessionKey') || resp.headers.get('sessionkey');
-                    if (skh) { this.sessionKey = skh; return skh; }
-                    return null;
-                } catch (e) { return null; }
-            }
+            try {
+                const sk = this.getSessionKey();
+                if (sk) { this.sessionKey = sk; return sk; }
+
+                // GM_xmlhttpRequest get sessionKey
+                const response = await new Promise((resolve) => {
+                    GM_xmlhttpRequest({
+                        method: 'GET',
+                        url: `${WEB_URL}/api/portal/getUserSizeInfo.action`,
+                        headers: { 'Accept': 'application/json', 'User-Agent': UserAgent },
+                        onload: r => resolve(r),
+                        onerror: () => resolve(null)
+                    });
+                });
+
+                if (!response) return null;
+                
+                const skh = response.responseHeaders.match(/sessionkey:\s*([^\r\n]+)/i)?.[1] || 
+                            response.responseHeaders.match(/SessionKey:\s*([^\r\n]+)/i)?.[1];
+                
+                if (skh) { this.sessionKey = skh; return skh; }
+
+                const setCookie = response.responseHeaders.match(/set-cookie:\s*([^\r\n]+)/i)?.[1];
+                if (setCookie && setCookie.includes('sessionKey=')) {
+                    const match = setCookie.match(/sessionKey=([^;]+)/);
+                    if (match) { this.sessionKey = match[1]; return match[1]; }
+                }
+
+                return null;
+            } catch (e) { return null; }
+        }
 
             parseXmlResponse(xmlString) {
                 const result = {};
@@ -729,15 +866,16 @@
 
             async buildUploadRequest(params, requestUri, method = 'GET') {
                 const rsaKey = await this.generateRsaKey();
-                const sk = this.getSessionKey();
+                const sk = this.getSessionKey() || await this.fetchSessionKey() || '';
+                const safeSk = typeof sk === 'string' ? sk.replace(/[\r\n]/g, '').trim() : '';
                 const uuid = Utils.randomString(16);
                 const ts = Utils.timestamp().toString();
                 const encryptedParams = await AES.encrypt(params, uuid);
                 const encryptionText = await RSA.encryptBase64(rsaKey.pubKey, uuid);
-                const signature = await HMAC.sha1({ SessionKey: sk, Operate: method, RequestURI: requestUri, Date: ts, params: encryptedParams }, uuid);
+                const signature = await HMAC.sha1({ SessionKey: safeSk, Operate: method, RequestURI: requestUri, Date: ts, params: encryptedParams }, uuid);
                 return {
                     url: `${UPLOAD_URL}${requestUri}?params=${encryptedParams}`,
-                    headers: { 'X-Request-Date': ts, 'X-Request-ID': Utils.randomUUID(), 'SessionKey': sk, 'EncryptionText': encryptionText, 'PkId': rsaKey.pkId, 'Signature': signature, 'User-Agent': UserAgent }
+                    headers: { 'X-Request-Date': ts, 'X-Request-ID': Utils.randomUUID(), 'SessionKey': safeSk, 'EncryptionText': encryptionText, 'PkId': rsaKey.pkId, 'Signature': signature, 'User-Agent': UserAgent }
                 };
             }
 
@@ -750,25 +888,24 @@
 
             async initMultiUpload(parentFolderId, fileName, fileSize, sliceSize, fileMd5, sliceMd5) {
                 const params = { parentFolderId, fileName: encodeURIComponent(fileName), fileSize, sliceSize };
-                const useFamilyUpload = this.shouldUseFamilyUpload();
-                if (useFamilyUpload) {
+                if (this.activeUploadFamilyMode) {
                     const familyId = await this.getCurrentFamilyId();
                     if (familyId) params.familyId = familyId;
                 }
                 if (fileMd5 && sliceMd5) { params.fileMd5 = fileMd5; params.sliceMd5 = sliceMd5; } else { params.lazyCheck = '1'; }
-                const uri = useFamilyUpload ? '/family/initMultiUpload' : '/person/initMultiUpload';
+                const uri = this.activeUploadFamilyMode ? '/family/initMultiUpload' : '/person/initMultiUpload';
                 const { url, headers } = await this.buildUploadRequest(params, uri);
                 return await (await this.gmFetch(url, { headers })).json();
             }
 
             async checkTransSecond(fileMd5, sliceMd5, uploadFileId) {
-                const uri = this.shouldUseFamilyUpload() ? '/family/checkTransSecond' : '/person/checkTransSecond';
+                const uri = this.activeUploadFamilyMode ? '/family/checkTransSecond' : '/person/checkTransSecond';
                 const { url, headers } = await this.buildUploadRequest({ fileMd5, sliceMd5, uploadFileId }, uri);
                 return await (await this.gmFetch(url, { headers })).json();
             }
 
             async commitMultiUpload(uploadFileId, fileMd5, sliceMd5) {
-                const uri = this.shouldUseFamilyUpload() ? '/family/commitMultiUploadFile' : '/person/commitMultiUploadFile';
+                const uri = this.activeUploadFamilyMode ? '/family/commitMultiUploadFile' : '/person/commitMultiUploadFile';
                 const { url, headers } = await this.buildUploadRequest({ uploadFileId, fileMd5, sliceMd5, lazyCheck: 1, opertype: '3' }, uri);
                 return await (await this.gmFetch(url, { headers })).json();
             }
@@ -806,83 +943,27 @@
                 } catch (e) { return null; }
             }
 
-            async deleteFile(fileId, fileName = '') {
-                if (this.isFamilySpace()) {
-                    const familyId = await this.getCurrentFamilyId();
-                    if (!familyId) throw new Error('无法获取 familyId');
-
-                    const srcParentId = this.getCurrentFolderId(true) || await this.getFamilyRootFolderId();
-                    const requestUrl = `${API_URL}/open/batch/createBatchTask.action`;
-                    const requestParams = {
-                        type: 'DELETE',
-                        taskInfos: JSON.stringify([{
-                            fileId: String(fileId),
-                            fileName: fileName,
-                            isFolder: 0,
-                            srcParentId: String(srcParentId ?? '')
-                        }]),
-                        targetFolderId: '',
-                        familyId: String(familyId)
-                    };
-                    const signatureInfo = this.buildFamilySignature(requestUrl, this.getAccessToken(), requestParams);
-                    const requestHeaders = {
-                        'Accept': 'application/json;charset=UTF-8',
-                        'Sign-Type': '1',
-                        'User-Agent': UserAgent,
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    };
-                    if (this.getAccessToken()) requestHeaders.AccessToken = this.getAccessToken();
-                    if (this.familyRequestContext?.browserId) requestHeaders['Browser-Id'] = this.familyRequestContext.browserId;
-                    if (signatureInfo) {
-                        requestHeaders.Signature = signatureInfo.signature;
-                        requestHeaders.Timestamp = signatureInfo.timestamp;
-                    }
-                    const postData = `type=${encodeURIComponent(requestParams.type)}&taskInfos=${encodeURIComponent(requestParams.taskInfos)}&targetFolderId=${encodeURIComponent(requestParams.targetFolderId)}&familyId=${encodeURIComponent(requestParams.familyId)}`;
-                    Utils.logDelete('[家庭删除] 签名原文:', signatureInfo?.signText || '');
-                    Utils.logDelete('[家庭删除] 请求地址:', requestUrl);
-                    Utils.logDelete('[家庭删除] 请求头:', JSON.stringify(requestHeaders));
-                    Utils.logDelete('[家庭删除] 请求体:', postData);
-
-                    const responseText = await new Promise((resolve, reject) => {
-                        GM_xmlhttpRequest({
-                            method: 'POST',
-                            url: requestUrl,
-                            headers: requestHeaders,
-                            data: postData,
-                            onload: r => resolve(r.responseText),
-                            onerror: () => reject(new Error('删除家庭 .cas 文件失败'))
-                        });
-                    });
-                    Utils.logDelete('[家庭删除] 原始响应:', responseText);
-
-                    const result = JSON.parse(responseText);
-                    if (result.res_code !== 0 && result.errorCode) {
-                        Utils.logDelete('[家庭删除] 接口报错:', JSON.stringify(result));
-                        throw new Error(result.errorMsg || result.res_message || '删除家庭 .cas 文件失败');
-                    }
-                    if (result.res_code !== 0 && result.errorCode == null) {
-                        Utils.logDelete('[家庭删除] 接口报错:', JSON.stringify(result));
-                        throw new Error(result.res_message || '删除家庭 .cas 文件失败');
-                    }
-                    Utils.logDelete('[家庭删除] 删除成功:', JSON.stringify(result));
-                    return result;
-                }
-
+            async createPersonalBatchTask(type, taskInfos, targetFolderId = '', extraParams = {}) {
                 const requestUrl = `${WEB_URL}/api/open/batch/createBatchTask.action?noCache=${Math.random()}`;
+                const requestParams = {
+                    type,
+                    taskInfos: JSON.stringify(taskInfos),
+                    targetFolderId: targetFolderId == null ? '' : String(targetFolderId),
+                    ...Object.fromEntries(Object.entries(extraParams).map(([key, value]) => [key, value == null ? '' : String(value)]))
+                };
                 const requestHeaders = {
                     'Accept': 'application/json;charset=UTF-8',
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'Sign-Type': '1',
                     'User-Agent': UserAgent
                 };
-                const postData = `type=DELETE&taskInfos=${encodeURIComponent(JSON.stringify([{
-                    fileId: String(fileId),
-                    fileName: fileName,
-                    isFolder: 0
-                }]))}&targetFolderId=`;
-                Utils.logDelete('[个人删除] 请求地址:', requestUrl);
-                Utils.logDelete('[个人删除] 请求头:', JSON.stringify(requestHeaders));
-                Utils.logDelete('[个人删除] 请求体:', postData);
+                const postData = Object.entries(requestParams)
+                    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+                    .join('&');
+
+                Utils.logDelete(`[个人批量任务:${type}] 请求地址:`, requestUrl);
+                Utils.logDelete(`[个人批量任务:${type}] 请求头:`, JSON.stringify(requestHeaders));
+                Utils.logDelete(`[个人批量任务:${type}] 请求体:`, postData);
 
                 const responseText = await new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
@@ -890,19 +971,107 @@
                         url: requestUrl,
                         headers: requestHeaders,
                         data: postData,
-                        onload: r => resolve(r.responseText),
-                        onerror: () => reject(new Error('删除 .cas 文件失败'))
+                        onload: r => resolve(typeof r.responseText === 'string' ? r.responseText : ''),
+                        onerror: () => reject(new Error(`${type} 任务创建失败`))
                     });
                 });
-                Utils.logDelete('[个人删除] 原始响应:', responseText);
+                Utils.logDelete(`[个人批量任务:${type}] 原始响应:`, responseText || '<empty>');
 
-                const result = JSON.parse(responseText);
-                if (result.res_code !== 0) {
-                    Utils.logDelete('[个人删除] 接口报错:', JSON.stringify(result));
-                    throw new Error(result.res_message || '删除 .cas 文件失败');
+                const result = responseText.trim() ? JSON.parse(responseText) : {};
+                if ((result.res_code != null && result.res_code !== 0) || result.errorCode) {
+                    throw new Error(result.errorMsg || result.res_message || `${type} 任务创建失败`);
                 }
-                Utils.logDelete('[个人删除] 删除成功:', JSON.stringify(result));
                 return result;
+            }
+
+            async checkPersonalBatchTask(type, taskId) {
+                const requestUrl = `${WEB_URL}/api/open/batch/checkBatchTask.action?noCache=${Math.random()}`;
+                const requestHeaders = {
+                    'Accept': 'application/json;charset=UTF-8',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Sign-Type': '1',
+                    'User-Agent': UserAgent
+                };
+                const postData = `type=${encodeURIComponent(type)}&taskId=${encodeURIComponent(String(taskId))}`;
+
+                const responseText = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: requestUrl,
+                        headers: requestHeaders,
+                        data: postData,
+                        onload: r => resolve(typeof r.responseText === 'string' ? r.responseText : ''),
+                        onerror: () => reject(new Error(`${type} 任务状态查询失败`))
+                    });
+                });
+                Utils.logDelete(`[个人批量任务:${type}] 状态响应:`, responseText || '<empty>');
+
+                const result = responseText.trim() ? JSON.parse(responseText) : {};
+                if ((result.res_code != null && result.res_code !== 0) || result.errorCode) {
+                    throw new Error(result.errorMsg || result.res_message || `${type} 任务状态查询失败`);
+                }
+                return result;
+            }
+
+            async waitPersonalBatchTask(type, taskId, timeoutMs = 30000) {
+                const startedAt = Date.now();
+                while (Date.now() - startedAt < timeoutMs) {
+                    const result = await this.checkPersonalBatchTask(type, taskId);
+                    const status = this.extractBatchTaskStatus(result);
+                    const successedCount = Number(result?.successedCount ?? result?.data?.successedCount ?? 0);
+                    const failedCount = Number(result?.failedCount ?? result?.data?.failedCount ?? 0);
+                    const skipCount = Number(result?.skipCount ?? result?.data?.skipCount ?? 0);
+                    const subTaskCount = Number(result?.subTaskCount ?? result?.data?.subTaskCount ?? 0);
+
+                    if (status === 4) return result;
+                    if (subTaskCount > 0 && successedCount + failedCount + skipCount >= subTaskCount) {
+                        if (failedCount > 0) throw new Error(`${type} 任务失败，失败数量: ${failedCount}`);
+                        return result;
+                    }
+                    if (status === 2) throw new Error('目标目录存在同名文件，请先处理重名后重试');
+                    if (status != null && status < 0) throw new Error(`${type} 任务失败`);
+                    if (status != null && ![0, 1, 3, 4].includes(status)) {
+                        throw new Error(`${type} 任务失败，状态码: ${status}`);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                throw new Error(`${type} 任务等待超时`);
+            }
+
+            async deletePersonalFilePermanently(fileId, fileName = '') {
+                const taskInfos = [{
+                    fileId: String(fileId),
+                    fileName: fileName || '',
+                    isFolder: 0
+                }];
+
+                const deleteResult = await this.createPersonalBatchTask('DELETE', taskInfos, '', {});
+                const deleteTaskId = this.extractBatchTaskId(deleteResult);
+                if (!deleteTaskId) throw new Error('未获取到 DELETE 任务ID');
+                await this.waitPersonalBatchTask('DELETE', deleteTaskId);
+
+                const clearResult = await this.createPersonalBatchTask('CLEAR_RECYCLE', taskInfos, '', {});
+                const clearTaskId = this.extractBatchTaskId(clearResult);
+                if (!clearTaskId) throw new Error('未获取到 CLEAR_RECYCLE 任务ID');
+                await this.waitPersonalBatchTask('CLEAR_RECYCLE', clearTaskId);
+            }
+
+            async deleteFile(fileId, fileName = '', options = {}) {
+                if (this.isFamilySpace() || options.forceFamilySpace) {
+                    const familyId = await this.getCurrentFamilyId();
+                    if (!familyId) throw new Error('无法获取 familyId');
+
+                    const srcParentId = options.srcParentId || this.getCurrentFolderId(true) || await this.getFamilyRootFolderId();
+                    Utils.logDelete('[家庭删除] 开始删除:', `${fileName || fileId} (srcParentId=${srcParentId})`);
+                    await this.deleteFamilyFilePermanently(fileId, fileName, srcParentId);
+                    Utils.logDelete('[家庭删除] 删除成功:', `${fileName || fileId}`);
+                    return { success: true };
+                }
+
+                Utils.logDelete('[个人删除] 开始删除:', `${fileName || fileId}`);
+                await this.deletePersonalFilePermanently(fileId, fileName);
+                Utils.logDelete('[个人删除] 删除成功:', `${fileName || fileId}`);
+                return { success: true };
             }
 
             // ★★★ 获取文件下载链接 ★★★
@@ -961,11 +1130,15 @@
                     if (familyId) {
                         return await this.familyFetchJson(`${API_URL}/open/family/file/listFiles.action?pageSize=60&pageNum=${pageNum}&mediaType=0&familyId=${encodeURIComponent(familyId)}&folderId=${encodeURIComponent(effectiveFolderId || '')}&iconOption=5&orderBy=3&descending=true`);
                     }
+
+                    const rawSk = this.getSessionKey() || '';
+                    const safeSk = typeof rawSk === 'string' ? rawSk.replace(/[\r\n]/g, '').trim() : '';
+
                     const responseText = await new Promise((resolve, reject) => {
                         GM_xmlhttpRequest({
                             method: 'GET',
                             url: `${WEB_URL}/api/open/file/listFiles.action?folderId=${effectiveFolderId}&mediaType=0&orderBy=lastOpTime&descending=true&pageNum=${pageNum}&pageSize=60`,
-                            headers: { 'Accept': 'application/json;charset=UTF-8', 'Sign-Type': '1', 'User-Agent': UserAgent },
+                            headers: { 'Accept': 'application/json;charset=UTF-8', 'Sign-Type': '1', 'User-Agent': UserAgent, 'SessionKey': safeSk, 'Referer': window.location.origin + '/' },
                             onload: r => resolve(r.responseText),
                             onerror: e => reject(new Error('获取文件列表失败'))
                         });
@@ -1057,28 +1230,55 @@
                 return currentFolderId;
             }
 
-            async rapidUpload(fileName, fileSize, fileMd5, sliceMd5, parentFolderId = null, dirPath = '') {
+            async rapidUpload(fileName, fileSize, fileMd5, sliceMd5, parentFolderId = null, dirPath = '', options = {}) {
                 try {
-                    const useFamilyUpload = this.shouldUseFamilyUpload();
-                    let baseFolderId = parentFolderId;
-                    if (!baseFolderId) {
-                        if (useFamilyUpload) {
-                            if (this.isFamilySpace()) {
-                                const currentFamilyFolderId = this.getCurrentFolderId(true);
-                                baseFolderId = currentFamilyFolderId || await this.getFamilyRootFolderId();
-                            } else {
-                                baseFolderId = await this.getFamilyRootFolderId();
-                            }
-                        } else {
-                            baseFolderId = this.getCurrentFolderId(false);
+                    const forceFamilyUpload = !!options.forceFamilyUpload && !this.isFamilySpace();
+                    const useFamilyUpload = this.shouldUseFamilyUpload(forceFamilyUpload);
+                    let uploadFolderId = parentFolderId;
+                    let targetFolderId = parentFolderId;
+
+                    if (forceFamilyUpload) {
+                        let personalBaseFolderId = parentFolderId;
+                        if (!personalBaseFolderId && !this.isFamilySpace()) {
+                            personalBaseFolderId = this.getCurrentFolderId(false) || '-11';
                         }
+                        if (!personalBaseFolderId && this.isFamilySpace()) {
+                            throw new Error('当前在家庭云页面时，请填写个人目标文件夹ID');
+                        }
+                        if (dirPath && dirPath.trim()) {
+                            personalBaseFolderId = await this.ensureFolderPath(dirPath, personalBaseFolderId);
+                        }
+                        targetFolderId = personalBaseFolderId || '-11';
+                        if (this.isFamilySpace()) {
+                            uploadFolderId = this.getCurrentFolderId(true) || await this.getFamilyRootFolderId();
+                        } else {
+                            uploadFolderId = await this.getFamilyRootFolderId();
+                        }
+                    } else {
+                        let baseFolderId = parentFolderId;
+                        if (!baseFolderId) {
+                            if (useFamilyUpload) {
+                                if (this.isFamilySpace()) {
+                                    const currentFamilyFolderId = this.getCurrentFolderId(true);
+                                    baseFolderId = currentFamilyFolderId || await this.getFamilyRootFolderId();
+                                } else {
+                                    baseFolderId = await this.getFamilyRootFolderId();
+                                }
+                            } else {
+                                baseFolderId = this.getCurrentFolderId(false);
+                            }
+                        }
+                        if (dirPath && dirPath.trim()) baseFolderId = await this.ensureFolderPath(dirPath, baseFolderId);
+                        uploadFolderId = baseFolderId;
+                        targetFolderId = baseFolderId;
                     }
-                    if (dirPath && dirPath.trim()) baseFolderId = await this.ensureFolderPath(dirPath, baseFolderId);
-                    parentFolderId = baseFolderId;
+
                     const sliceSize = this.partSize(fileSize);
-                    Utils.logDelete('[上传] 接口模式:', useFamilyUpload ? '家庭接口' : '个人接口');
-                    Utils.logDelete('[上传] 目标目录ID:', String(parentFolderId ?? ''));
-                    const initResult = await this.initMultiUpload(parentFolderId, fileName, fileSize, sliceSize, sliceMd5 = sliceMd5);
+                    this.activeUploadFamilyMode = useFamilyUpload;
+                    Utils.logDelete('[上传] 接口模式:', forceFamilyUpload ? '家庭接口(转个人)' : (useFamilyUpload ? '家庭接口' : '个人接口'));
+                    Utils.logDelete('[上传] 上传目录ID:', String(uploadFolderId ?? ''));
+                    Utils.logDelete('[上传] 最终目标目录ID:', String(targetFolderId ?? ''));
+                    const initResult = await this.initMultiUpload(uploadFolderId, fileName, fileSize, sliceSize, sliceMd5 = sliceMd5);
                     if (initResult.errorCode) throw new Error(initResult.errorCode === 'InvalidSessionKey' ? '登录已过期' : initResult.errorMsg || initResult.errorCode);
                     if (initResult.code !== 'SUCCESS') throw new Error(initResult.msg || '初始化失败');
                     const uploadFileId = initResult.data.uploadFileId;
@@ -1089,12 +1289,20 @@
                     if (commitResult.errorCode) throw new Error(commitResult.errorMsg || commitResult.errorCode);
                     if (commitResult.code !== 'SUCCESS') throw new Error(commitResult.msg || '提交失败');
                     const uploadedFileId = commitResult.file?.userFileId || commitResult.file?.fileId || commitResult.data?.fileId || null;
-                    if (useFamilyUpload && !this.isFamilySpace() && uploadedFileId) {
-                        await this.saveFamilyFileToPersonal(uploadedFileId);
+                    if (forceFamilyUpload && uploadedFileId) {
+                        await this.copyFamilyFileToPersonal(uploadedFileId, fileName, targetFolderId || '-11');
+                        try {
+                            await this.deleteFile(uploadedFileId, fileName, { forceFamilySpace: true, srcParentId: uploadFolderId });
+                        } catch (deleteError) {
+                            Utils.logDelete('[上传] 家庭源文件删除失败:', deleteError.message || String(deleteError));
+                        }
+                        return { success: true, userFileId: uploadedFileId, message: '秒传成功，已转存到个人空间' };
                     }
                     return { success: true, userFileId: uploadedFileId, message: useFamilyUpload && !this.isFamilySpace() ? '秒传成功，已转存到个人空间' : '秒传成功' };
                 } catch (error) {
                     return { success: false, message: error.message };
+                } finally {
+                    this.activeUploadFamilyMode = false;
                 }
             }
 
@@ -1153,6 +1361,7 @@
                     .cloud189-rapid-input:focus { outline:none;border-color:#667eea; }
                     .cloud189-rapid-textarea { width:100%;min-height:120px;padding:10px 12px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:vertical;font-family:monospace;box-sizing:border-box; }
                     .cloud189-rapid-textarea:focus { outline:none;border-color:#667eea; }
+                    #detail-log-box { min-height:180px;border-color:#cfd8dc;background:#fafcff; }
                     .cloud189-rapid-btn { width:100%;padding:12px;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;transition:all .2s; }
                     .cloud189-rapid-btn-primary { background:linear-gradient(135deg,#667eea,#764ba2);color:#fff; }
                     .cloud189-rapid-btn-secondary { background:#f5f7fb;color:#334155;border:1px solid #dbe3f0; }
@@ -1174,6 +1383,91 @@
                     .cloud189-rapid-float-btn:hover { transform:scale(1.1);box-shadow:0 6px 16px rgba(102,126,234,.5); }
                     .cloud189-rapid-toast { position:fixed;top:20px;right:20px;background:#323232;color:#fff;padding:12px 20px;border-radius:6px;z-index:9999999;animation:slideIn .3s ease; }
                     @keyframes slideIn { from { transform:translateX(100%);opacity:0; } to { transform:translateX(0);opacity:1; } }
+
+                    // ============== UI for H5 ==============
+                    @media (max-width: 767px) {
+                    .cloud189-rapid-panel {
+                        width: 92vw !important;
+                        max-width: 450px !important;
+                        left: 50% !important;
+                        top: 50% !important;
+                        transform: translate(-50%, -50%) !important;
+                        border-radius: 12px !important;
+                        box-shadow: 0 8px 24px rgba(0,0,0,0.15) !important;
+                        overflow: hidden !important;
+                    }
+                    .cloud189-rapid-panel-header {
+                        padding: 15px !important;
+                        border-bottom: 1px solid #eee !important;
+                    }
+                    .cloud189-rapid-panel-title {
+                        font-size: 16px !important;
+                    }
+                    .cloud189-rapid-panel-body {
+                        padding: 15px !important;
+                    }
+                    .cloud189-rapid-tab-container {
+                        display: flex !important;
+                        overflow-x: auto !important;
+                        -webkit-overflow-scrolling: touch !important;
+                    }
+                    .cloud189-rapid-tab {
+                        padding: 10px 5px !important;
+                        font-size: 13px !important;
+                        flex: 1 !important;
+                        text-align: center !important;
+                        white-space: nowrap !important;
+                    }
+                    .cloud189-rapid-tab:active {
+                        background-color: rgba(0, 0, 0, 0.05) !important;
+                    }
+                    .cloud189-rapid-info {
+                        font-size: 12px !important;
+                        padding: 10px !important;
+                    }
+                    .cloud189-rapid-btn {
+                        height: 44px !important;
+                        line-height: 44px !important;
+                        padding: 0 15px !important;
+                        font-size: 14px !important;
+                        border-radius: 8px !important;
+                    }
+                    .cloud189-rapid-btn:active {
+                        opacity: 0.8 !important;
+                    }
+                    .cloud189-rapid-float-btn {
+                        width: 52px !important;
+                        height: 52px !important;
+                        bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+                        right: 20px !important;
+                        font-size: 22px !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        justify-content: center !important;
+                        border-radius: 50% !important;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+                    }
+                    .cloud189-rapid-textarea {
+                        width: 100% !important;
+                        min-height: 100px !important;
+                        font-size: 14px !important;
+                        box-sizing: border-box !important;
+                        -webkit-appearance: none !important;
+                    }
+                    #detail-log-box {
+                        min-height: 120px !important;
+                        max-height: 40vh !important;
+                        font-size: 12px !important;
+                    }
+                    .cloud189-rapid-toast {
+                        width: auto !important;
+                        max-width: 80% !important;
+                        left: 50% !important;
+                        bottom: 20% !important;
+                        transform: translateX(-50%) !important;
+                        text-align: center !important;
+                    }
+                }
                 `);
             },
 
@@ -1200,9 +1494,10 @@
                     const activeTab = GM_getValue(STORAGE_KEYS.activeTab, 'parse');
                     const deleteCasAfterUpload = GM_getValue(STORAGE_KEYS.deleteCasAfterUpload, false);
                     const renameByCasFileName = GM_getValue(STORAGE_KEYS.renameByCasFileName, true);
+                    const forceFamilyUpload = GM_getValue(STORAGE_KEYS.forceFamilyUpload, false);
                     panel.innerHTML = `
                     <div class="cloud189-rapid-panel-header">
-                        <span class="cloud189-rapid-panel-title">🚀 天翼云盘秒传助手 v1.3.0</span>
+                        <span class="cloud189-rapid-panel-title">🚀 天翼云盘秒传助手 v1.4.2</span>
                         <button class="cloud189-rapid-panel-close">×</button>
                     </div>
                     <div class="cloud189-rapid-panel-body">
@@ -1210,6 +1505,7 @@
                         <div class="cloud189-rapid-tabs">
                             <button class="cloud189-rapid-tab ${activeTab === 'parse' ? 'active' : ''}" data-tab="parse">📤 秒传上传</button>
                             <button class="cloud189-rapid-tab ${activeTab === 'cas' ? 'active' : ''}" data-tab="cas">📂 扫描CAS转存</button>
+                            <button class="cloud189-rapid-tab ${activeTab === 'settings' ? 'active' : ''}" data-tab="settings">⚙ 设置</button>
                         </div>
 
                         <!-- 秒传上传 -->
@@ -1255,6 +1551,31 @@
                                 <label class="cloud189-rapid-label">目标转存文件夹ID（可选，留空=当前目录）</label>
                                 <input type="text" class="cloud189-rapid-input" id="cas-target-folder" placeholder="-11 为根目录">
                             </div>
+                            <button class="cloud189-rapid-btn cloud189-rapid-btn-primary" id="cas-scan-btn">① 扫描 CAS 文件</button>
+                            <textarea class="cloud189-rapid-textarea" id="cas-result" style="margin-top:12px;" placeholder="扫描结果会显示在这里..."></textarea>
+                            <button class="cloud189-rapid-btn cloud189-rapid-btn-success" id="cas-upload-btn" disabled>② 批量秒传上面的文件</button>
+                            <div id="cas-progress" style="display:none;margin-top:12px;">
+                                <div style="background:#f0f0f0;border-radius:4px;height:8px;overflow:hidden;">
+                                    <div id="cas-progress-bar" style="background:linear-gradient(135deg,#43a047,#2e7d32);height:100%;width:0%;transition:width .3s;"></div>
+                                </div>
+                                <div id="cas-progress-text" style="text-align:center;margin-top:8px;font-size:13px;color:#666;">0/0</div>
+                            </div>
+                            <div class="cloud189-rapid-result" id="cas-upload-result" style="display:none;"></div>
+                        </div>
+
+                        <div class="cloud189-rapid-content ${activeTab === 'settings' ? 'active' : ''}" data-content="settings">
+                            <div class="cloud189-rapid-info">
+                                这里统一管理开关和查看详细日志。
+                            </div>
+                            <div class="cloud189-rapid-form-group">
+                                <label class="cloud189-rapid-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                    <input type="checkbox" id="force-family-upload" style="width:auto;" ${forceFamilyUpload ? 'checked' : ''}>
+                                    始终使用家庭接口上传
+                                </label>
+                                <div class="cloud189-rapid-info" style="margin-top:8px;margin-bottom:0;">
+                                    仅在个人云页面生效。打开后会先使用家庭接口上传，再转存到当前/指定个人目录；在家庭云页面会自动回到正常家庭上传逻辑。
+                                </div>
+                            </div>
                             <div class="cloud189-rapid-form-group">
                                 <label class="cloud189-rapid-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
                                     <input type="checkbox" id="delete-cas-after-upload" style="width:auto;" ${deleteCasAfterUpload ? 'checked' : ''}>
@@ -1270,16 +1591,10 @@
                                     打开后沿用当前逻辑：优先用 <code>.cas</code> 文件名合并扩展名；关闭后直接使用 Base64/JSON 里解析出的原始名称。
                                 </div>
                             </div>
-                            <button class="cloud189-rapid-btn cloud189-rapid-btn-primary" id="cas-scan-btn">① 扫描 CAS 文件</button>
-                            <textarea class="cloud189-rapid-textarea" id="cas-result" style="margin-top:12px;" placeholder="扫描结果会显示在这里..."></textarea>
-                            <button class="cloud189-rapid-btn cloud189-rapid-btn-success" id="cas-upload-btn" disabled>② 批量秒传上面的文件</button>
-                            <div id="cas-progress" style="display:none;margin-top:12px;">
-                                <div style="background:#f0f0f0;border-radius:4px;height:8px;overflow:hidden;">
-                                    <div id="cas-progress-bar" style="background:linear-gradient(135deg,#43a047,#2e7d32);height:100%;width:0%;transition:width .3s;"></div>
-                                </div>
-                                <div id="cas-progress-text" style="text-align:center;margin-top:8px;font-size:13px;color:#666;">0/0</div>
+                            <div class="cloud189-rapid-form-group" style="margin-top:12px;">
+                                <label class="cloud189-rapid-label">详细日志</label>
+                                <textarea class="cloud189-rapid-textarea" id="detail-log-box" placeholder="上传、转存、删除日志会显示在这里..."></textarea>
                             </div>
-                            <div class="cloud189-rapid-result" id="cas-upload-result" style="display:none;"></div>
                         </div>
                     </div>`;
 
@@ -1327,10 +1642,18 @@
                 const rapidLinkInput = panel.querySelector('#rapid-link-input');
                 const importCasBtn = panel.querySelector('#import-cas-btn');
                 const casFileInput = panel.querySelector('#cas-file-input');
+                const forceFamilyUploadCheckbox = panel.querySelector('#force-family-upload');
+
+                if (forceFamilyUploadCheckbox) {
+                    forceFamilyUploadCheckbox.onchange = () => {
+                        GM_setValue(STORAGE_KEYS.forceFamilyUpload, forceFamilyUploadCheckbox.checked);
+                    };
+                }
 
                 const startUpload = async () => {
                     const linkInput = panel.querySelector('#rapid-link-input').value.trim();
                     const folderId = panel.querySelector('#target-folder-id').value.trim() || null;
+                    const forceFamilyUpload = forceFamilyUploadCheckbox ? forceFamilyUploadCheckbox.checked : false;
                     if (!linkInput) { this.showToast('请输入内容'); return; }
                     const parsed = Utils.parseRapidLink(linkInput);
                     if (!parsed) { this.showToast('格式无法识别'); return; }
@@ -1342,7 +1665,7 @@
                             const item = parsed.items[i];
                             progressBar.style.width = `${(i+1)/parsed.items.length*100}%`;
                             progressText.textContent = `${i+1}/${parsed.items.length} - ${item.fileName}`;
-                            const r = await client.rapidUpload(item.fileName, item.fileSize, item.fileMd5, item.sliceMd5, folderId, item.dirPath || '');
+                            const r = await client.rapidUpload(item.fileName, item.fileSize, item.fileMd5, item.sliceMd5, folderId, item.dirPath || '', { forceFamilyUpload });
                             results.push({ fileName: item.fileName, ...r }); r.success ? ok++ : fail++;
                             await new Promise(resolve => setTimeout(resolve, 500));
                         }
@@ -1353,7 +1676,7 @@
                         if (ok) setTimeout(() => location.reload(), 1500);
                     } else {
                         uploadBtn.disabled = true; uploadBtn.innerHTML = '<span class="cloud189-rapid-loading"></span>秒传中...'; resultDiv.style.display = 'none';
-                        const r = await client.rapidUpload(parsed.fileName, parsed.fileSize, parsed.fileMd5, parsed.sliceMd5, folderId, parsed.dirPath || '');
+                        const r = await client.rapidUpload(parsed.fileName, parsed.fileSize, parsed.fileMd5, parsed.sliceMd5, folderId, parsed.dirPath || '', { forceFamilyUpload });
                         uploadBtn.disabled = false; uploadBtn.textContent = '开始秒传';
                         resultDiv.style.display = 'block';
                         resultDiv.className = `cloud189-rapid-result ${r.success ? 'cloud189-rapid-result-success' : 'cloud189-rapid-result-error'}`;
@@ -1420,8 +1743,17 @@
                 const casProgressText = panel.querySelector('#cas-progress-text');
                 const deleteCasCheckbox = panel.querySelector('#delete-cas-after-upload');
                 const renameByCasFileNameCheckbox = panel.querySelector('#rename-by-cas-filename');
+                const forceFamilyUploadForCas = panel.querySelector('#force-family-upload');
+                const detailLogBox = panel.querySelector('#detail-log-box');
 
-                Utils.setDeleteLogger(null);
+                const appendDetailLog = (message) => {
+                    if (!detailLogBox) return;
+                    const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+                    detailLogBox.value += `[${time}] ${message}\n`;
+                    detailLogBox.scrollTop = detailLogBox.scrollHeight;
+                };
+
+                Utils.setDeleteLogger(appendDetailLog);
 
                 deleteCasCheckbox.onchange = () => {
                     GM_setValue(STORAGE_KEYS.deleteCasAfterUpload, deleteCasCheckbox.checked);
@@ -1437,6 +1769,8 @@
                     casScanBtn.disabled = true;
                     casScanBtn.innerHTML = '<span class="cloud189-rapid-loading"></span>扫描中...';
                     casResultBox.value = '正在扫描...';
+                    if (detailLogBox) detailLogBox.value = '';
+                    appendDetailLog('开始扫描当前目录中的 .cas 文件');
                     casUploadBtn.disabled = true;
                     casData = [];
 
@@ -1447,6 +1781,7 @@
                             folderId,
                             (type, name, current, total) => {
                                 casResultBox.value = `[${current}/${total}] ${type === 'downloading' ? '下载' : ''} ${name}`;
+                                appendDetailLog(`扫描进度 ${current}/${total}: ${type === 'downloading' ? '下载' : '处理'} ${name}`);
                             },
                             renameByCasFileName
                         );
@@ -1469,11 +1804,13 @@
 
                         casResultBox.value = output;
                         casUploadBtn.disabled = validItems.length === 0;
+                        appendDetailLog(`扫描完成，可用 ${validItems.length} 个，失败 ${errorItems.length} 个`);
 
                         this.showToast(`扫描完成: ${validItems.length} 可用, ${errorItems.length} 失败`);
 
                     } catch (e) {
                         casResultBox.value = '扫描失败: ' + e.message;
+                        appendDetailLog(`扫描失败: ${e.message}`);
                         this.showToast(e.message);
                     }
 
@@ -1486,6 +1823,11 @@
 
                     const targetFolder = panel.querySelector('#cas-target-folder').value.trim() || null;
                     const deleteCasAfterUpload = panel.querySelector('#delete-cas-after-upload').checked;
+                    const forceFamilyUpload = forceFamilyUploadForCas ? forceFamilyUploadForCas.checked : false;
+                    if (detailLogBox) detailLogBox.value = '';
+                    appendDetailLog(`开始批量秒传，共 ${casData.length} 个文件`);
+                    appendDetailLog(`始终使用家庭接口上传开关: ${forceFamilyUpload ? '开' : '关'}`);
+                    appendDetailLog(`删除 .cas 开关: ${deleteCasAfterUpload ? '开' : '关'}`);
                     casUploadBtn.disabled = true;
                     casProgress.style.display = 'block';
                     casUploadResult.style.display = 'none';
@@ -1502,11 +1844,16 @@
                         const fileName = lastSlash >= 0 ? item.name.substring(lastSlash + 1) : item.name;
                         const dirPath = lastSlash >= 0 ? item.name.substring(0, lastSlash) : '';
 
-                        const r = await client.rapidUpload(fileName, item.size, item.md5, item.slice_md5, targetFolder, dirPath);
+                        appendDetailLog(`开始处理: ${item.name}`);
+                        const r = await client.rapidUpload(fileName, item.size, item.md5, item.slice_md5, targetFolder, dirPath, { forceFamilyUpload });
+                        appendDetailLog(`${r.success ? '秒传成功' : '秒传失败'}: ${item.name} -> ${r.message}`);
                         if (r.success && deleteCasAfterUpload && item._casFileId) {
                             try {
+                                appendDetailLog(`开始删除 .cas: ${item._casFile || `${fileName}.cas`}`);
                                 await client.deleteFile(item._casFileId, item._casFile || `${fileName}.cas`);
+                                appendDetailLog(`删除 .cas 成功: ${item._casFile || `${fileName}.cas`}`);
                             } catch (deleteError) {
+                                appendDetailLog(`删除 .cas 失败: ${item._casFile || `${fileName}.cas`} -> ${deleteError.message}`);
                                 r.message += `；删除 .cas 失败: ${deleteError.message}`;
                             }
                         }
@@ -1519,6 +1866,7 @@
                     casUploadResult.style.display = 'block';
                     casUploadResult.className = `cloud189-rapid-result ${ok ? 'cloud189-rapid-result-success' : 'cloud189-rapid-result-error'}`;
                     casUploadResult.innerHTML = `完成！成功:${ok} 失败:${fail}<div style="margin-top:12px;max-height:200px;overflow-y:auto;">${results.map(r=>`<div style="padding:4px 0;border-bottom:1px solid #eee;font-size:12px;">${r.success?'✓':'✗'} ${r.fileName} - ${r.message}</div>`).join('')}</div>`;
+                    appendDetailLog(`批量任务完成，成功 ${ok} 个，失败 ${fail} 个`);
 
                     if (ok) { this.showToast(`${ok} 个文件秒传成功！`); setTimeout(() => location.reload(), 2000); }
                 };
@@ -1635,7 +1983,7 @@
         }
 
         function init() {
-            console.log('[天翼云盘秒传助手] v1.3.0 已加载');
+            console.log('[天翼云盘秒传助手] v1.4.2 已加载');
             installFamilyRequestHook();
             UI.addStyles();
             setTimeout(() => UI.createFloatButton(), 1000);

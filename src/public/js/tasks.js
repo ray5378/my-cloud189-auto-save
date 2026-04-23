@@ -9,6 +9,46 @@ const taskTmdbPending = new Set();
 let mediaWallTasksSnapshot = [];
 let mediaWallRefreshTimer = null;
 
+// TMDB缓存存储键名
+const TMDB_CACHE_KEY = 'taskTmdbCache_v1';
+
+// 从localStorage加载TMDB缓存（无过期机制，除非手动删除任务）
+function loadTmdbCacheFromStorage() {
+    try {
+        const stored = localStorage.getItem(TMDB_CACHE_KEY);
+        if (stored) {
+            const data = JSON.parse(stored);
+            Object.entries(data).forEach(([taskId, entry]) => {
+                taskTmdbCache.set(parseInt(taskId), entry.data);
+            });
+        }
+    } catch (e) {
+        console.warn('加载TMDB缓存失败:', e);
+    }
+}
+
+// 保存TMDB缓存到localStorage
+function saveTmdbCacheToStorage() {
+    try {
+        const data = {};
+        taskTmdbCache.forEach((value, key) => {
+            data[key] = { data: value };
+        });
+        localStorage.setItem(TMDB_CACHE_KEY, JSON.stringify(data));
+    } catch (e) {
+        console.warn('保存TMDB缓存失败:', e);
+    }
+}
+
+// 删除单个任务的TMDB缓存
+function removeTmdbCache(taskId) {
+    taskTmdbCache.delete(taskId);
+    saveTmdbCacheToStorage();
+}
+
+// 页面加载时初始化缓存
+loadTmdbCacheFromStorage();
+
 
 // 任务相关功能
 function createProgressRing(current, total) {
@@ -163,6 +203,7 @@ async function enrichTaskTmdb(task) {
         if (detail) {
             taskTmdbCache.set(task.id, detail);
             task.tmdbContent = JSON.stringify(detail);
+            saveTmdbCacheToStorage();  // 持久化缓存到localStorage
             scheduleMediaWallRefresh();
         }
     } catch (error) {
@@ -233,13 +274,14 @@ function renderTaskMediaWall(tasks) {
                     <div class="media-wall-topline">
                         <span class="status-badge status-${task.status}">${formatStatus(task.status)}</span>
                         ${metaLine ? `<span class="media-wall-meta">${metaLine}</span>` : ''}
+                        ${task.manualTmdbBound ? `<span class="tmdb-bound-badge" style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;margin-left:6px;">🎬 ${task.tmdbTitle || task.tmdbId}${task.manualSeason ? ' 第' + task.manualSeason + '季' : ''}</span>` : ''}
                     </div>
                     <a href="${task.shareLink}" target="_blank" class='media-wall-title' title="${taskName}">${taskName}</a>
                     <p class="media-wall-overview" title="${overview}">${overview}</p>
                     <div class="media-wall-latest" title="${latestSaved}">${latestSaved}</div>
                     ${formatMissingEpisodes(task) ? `<div class="media-wall-missing" title="${formatMissingEpisodesTitle(task)}">${formatMissingEpisodes(task)}</div>` : ''}
                     <div class="media-wall-path" title="${task.realFolderName || task.realFolderId}">${task.realFolderName || task.realFolderId}</div>
-                    <div class="media-wall-time" style="font-size: 11px; color: #94a3b8; margin-top: 4px;">更新时间: ${formatDateTime(task.lastFileUpdateTime) || '无'}</div>
+                    <div class="media-wall-time" style="font-size: 13px; color: #3b82f6; margin-top: 6px; font-weight: 500;">⏱ 更新: ${formatDateTime(task.lastFileUpdateTime) || '无'}</div>
                     <div class="media-wall-actions">
                         <button class="btn-warning" onclick="executeTask(${task.id})">执行</button>
                         <button onclick="showEditTaskModal(${task.id})">修改</button>
@@ -284,7 +326,7 @@ async function fetchTasks() {
                         <button class="btn-danger" onclick="deleteTask(${task.id})">删除</button>
                         <button class="btn-default" onclick="clearTaskCache(${task.id})">清缓存</button>
                     </td>
-                    <td data-label="资源名称">${cronIcon}<a href="${task.shareLink}" target="_blank" class='ellipsis' title="${taskName}">${taskName}</a></td>
+                    <td data-label="资源名称">${cronIcon}<a href="${task.shareLink}" target="_blank" class='ellipsis' title="${taskName}">${taskName}</a>${task.manualTmdbBound ? `<span style="background:#10b981;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;">🎬 ${task.tmdbTitle || task.tmdbId}${task.manualSeason ? ' S' + task.manualSeason : ''}</span>` : ''}</td>
                     <td data-label="账号">${task.account.username}</td>
                     <!--<td data-label="首次保存目录"><a href="https://cloud.189.cn/web/main/file/folder/${task.targetFolderId}" target="_blank">${task.targetFolderId}</a></td>-->
                      <td data-label="更新目录"><a href="javascript:void(0)" onclick="showFileListModal('${task.id}')" class='ellipsis'>${task.realFolderName || task.realFolderId}</a></td>
@@ -292,7 +334,7 @@ async function fetchTasks() {
                         <div class='ellipsis' title="${formatLatestSavedFile(task)}">${formatLatestSavedFile(task)}</div>
                         ${formatMissingEpisodes(task) ? `<div class='ellipsis' title="${formatMissingEpisodesTitle(task)}">${formatMissingEpisodes(task)}</div>` : ''}
                     </td>
-                    <td data-label="转存时间">${formatDateTime(task.lastFileUpdateTime)}</td>
+                    <td data-label="转存时间" style="font-size: 13px; color: #3b82f6; font-weight: 500;">${formatDateTime(task.lastFileUpdateTime)}</td>
                     <td data-label="备注">${task.remark?task.remark:''}</td>
                     <td data-label="状态"><span class="status-badge status-${task.status}">${formatStatus(task.status)}</span></td>
                 </tr>
@@ -316,6 +358,7 @@ async function fetchTasks() {
     loading.hide()
     const data = await response.json();
     if (data.success) {
+        removeTmdbCache(id);  // 删除任务的TMDB缓存
         message.success('任务删除成功');
         fetchTasks();
     } else {
@@ -506,7 +549,7 @@ function initTaskForm() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-    
+
             const data = await response.json();
             if (data.success) {
                 const targetFolderName = document.getElementById('targetFolder').value
@@ -515,20 +558,30 @@ function initTaskForm() {
                 document.getElementById('taskForm').reset();
                 document.getElementById('targetFolderId').value = body.targetFolderId;
                 const ids = data.data.map(item => item.id);
-                Promise.all(ids.map(id => executeTask(id, false)));
-                message.success('任务创建完成, 正在执行中, 请稍后查看结果');
-                setTimeout(() => {
-                    fetchTasks(); 
-                }, 2500);
+
+                // 先关闭弹窗和显示成功消息
                 closeCreateTaskModal();
-                // 触发任务页签的切换 .tab且data-tab='tasks'
+                loading.hide();  // 提前隐藏loading，让用户可以操作
+
+                // 切换到任务tab并立即刷新任务列表
                 const tasksTab = document.querySelector('.tab[data-tab="tasks"]');
                 if (tasksTab) {
                     tasksTab.click();
                 }
+                // 立即刷新任务列表显示新创建的任务
+                await fetchTasks();
+                message.success('任务创建完成，5秒后开始执行');
+
+                // 5秒后串行执行任务（后台执行，不阻塞界面）
+                setTimeout(async () => {
+                    for (const id of ids) {
+                        await executeTask(id, false);
+                    }
+                    fetchTasks();  // 执行完成后再次刷新
+                }, 5000);
             } else {
                 if (data.error == 'folder already exists') {
-                    if (confirm('该目录已经存在, 确定要覆盖吗?')) {
+                    if (confirm('该目录已经存在, 定要覆盖吗?')) {
                         body.overwriteFolder = 1
                         await createTask(e,body)
                     }

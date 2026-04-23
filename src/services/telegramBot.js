@@ -1,4 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
+const got = require('got');
 const { AppDataSource } = require('../database');
 const { Task, Account, CommonFolder } = require('../entities');
 const { TaskService } = require('./task');
@@ -47,6 +48,7 @@ class TelegramBotService {
         this.tmdbBindTaskId = null;  // 待绑定的任务ID
         this.tmdbBindType = 'tv';    // 搜索类型 tv/movie
         this.tmdbSearchResultsCache = []; // 搜索结果缓存
+        this.tmdbTitleCache = new Map(); // TMDB ID → Title 缓存（避免callback_data过长）
     }
 
     async start() {
@@ -1121,10 +1123,12 @@ class TelegramBotService {
         if (!input) return;
         const loadMsg = await this.bot.sendMessage(chatId, `🔍 正在搜索 "${input}"...`);
         try {
-            const response = await fetch(`http://localhost:${process.env.PORT || 3000}/api/tmdb/search?query=${encodeURIComponent(input)}&type=${this.tmdbBindType}`, {
-                headers: { 'x-api-key': require('./ConfigService').getConfigValue('system.apiKey', '') }
-            });
-            const result = await response.json();
+            const apiKey = require('./ConfigService').getConfigValue('system.apiKey', '');
+            const port = process.env.PORT || 3000;
+            const result = await got(`http://localhost:${port}/api/tmdb/search?query=${encodeURIComponent(input)}&type=${this.tmdbBindType}`, {
+                headers: { 'x-api-key': apiKey },
+                responseType: 'json'
+            }).json();
             if (!result.success || !result.data?.length) {
                 await this.bot.editMessageText(`未找到相关结果，请尝试其他关键词`, { chat_id: chatId, message_id: loadMsg.message_id });
                 return;
@@ -1155,18 +1159,20 @@ class TelegramBotService {
         const title = item.title || item.name;
         const tmdbId = item.id;
         const tp = data.tp;
+        // 缓存 title 避免 callback_data 过长
+        this.tmdbTitleCache.set(tmdbId, title);
         if (tp === 'tv') {
-            // 剧集类：进入选季数步骤
+            // 剧集类：进入选季数步骤（callback_data 不包含 title，避免超64字节）
             const seasonBtns = [1, 2, 3, 4, 5, 6].map(s => ({
                 text: `第${s}季`,
-                callback_data: JSON.stringify({ t: 'tse', s, id: tmdbId, tp, ti: data.ti, title })
+                callback_data: JSON.stringify({ t: 'tse', s, id: tmdbId, tp, ti: data.ti })
             }));
             const rows = [];
             for (let i = 0; i < seasonBtns.length; i += 3) rows.push(seasonBtns.slice(i, i + 3));
-            rows.push([{ text: '🤖 自动识别季数', callback_data: JSON.stringify({ t: 'tse', s: null, id: tmdbId, tp, ti: data.ti, title }) }]);
+            rows.push([{ text: '🤖 自动识别季数', callback_data: JSON.stringify({ t: 'tse', s: null, id: tmdbId, tp, ti: data.ti }) }]);
             rows.push([{ text: '❌ 取消', callback_data: JSON.stringify({ t: 'fc' }) }]);
             await this.bot.editMessageText(
-                `✅ 已选择：《${title}》 (TMDB: ${tmdbId})\n\n📅 请选择季数（不确定可选“自动识别”）：`,
+                `✅ 已选择：《${title}》 (TMDB: ${tmdbId})\n\n📅 请选择季数（不确定可选”自动识别”）：`,
                 { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: rows } }
             );
         } else {
@@ -1177,7 +1183,9 @@ class TelegramBotService {
 
     // 用户选了季数，执行最终绑定
     async _selectTmdbSeason(chatId, data, messageId) {
-        await this._doBindTmdb(chatId, messageId, data.ti, data.id, data.tp, data.title, data.s);
+        // 从缓存获取 title，避免 callback_data 过长
+        const title = this.tmdbTitleCache.get(data.id) || '未知';
+        await this._doBindTmdb(chatId, messageId, data.ti, data.id, data.tp, title, data.s);
     }
 
     // 实际调用API绑定TMDB并触发重命名
@@ -1186,18 +1194,18 @@ class TelegramBotService {
         try {
             const apiKey = require('./ConfigService').getConfigValue('system.apiKey', '');
             const port = process.env.PORT || 3000;
-            const resp = await fetch(`http://localhost:${port}/api/tasks/${taskId}/manual-tmdb`, {
+            const result = await got(`http://localhost:${port}/api/tasks/${taskId}/manual-tmdb`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-                body: JSON.stringify({ tmdbId: String(tmdbId), videoType, title, manualSeason })
-            });
-            const result = await resp.json();
+                json: { tmdbId: String(tmdbId), videoType, title, manualSeason },
+                responseType: 'json'
+            }).json();
             if (result.success) {
-                // 触发执行
-                fetch(`http://localhost:${port}/api/tasks/${taskId}/execute`, {
+                // 触发执行（后台异步，不等待结果）
+                got(`http://localhost:${port}/api/tasks/${taskId}/execute`, {
                     method: 'POST',
                     headers: { 'x-api-key': apiKey }
-                });
+                }).catch(() => {});
                 const seasonTxt = manualSeason != null ? ` 第${manualSeason}季` : ' (自动识别季)';
                 const successTxt = `✅ 绑定成功！\n🎥 媒体：${title}${videoType === 'tv' ? seasonTxt : ''}\n🎯 TMDB ID: ${tmdbId}\n\n🔄 已在后台触发重命名，稍后会发送结果通知`;
                 await this.bot.editMessageText(successTxt, { chat_id: chatId, message_id: messageId });

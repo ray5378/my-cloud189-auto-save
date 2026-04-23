@@ -19,10 +19,10 @@ class ConfigService {
         // 文件夹不存在时重新创建
         enableAutoCreateFolder: false,
         enableCasRapidUpload: true, // 启用 CAS 秒传
-        enableDeleteCasFile: true,  // 处理后删除 .cas 文件
+        enableDeleteCasFile: true,  // 处理后删除 .cas 文件（清理任务目标目录）
         enableCasFamilyTransfer: true,  // 启用家庭空间中转秒传（默认开启，失败则降级到个人接口）
-        casFamilyFolderId: '',          // 家庭空间中转目录ID，空字符串表示使用家庭根目录
-        enableDeleteFamilyTempFile: true, // 秒传完成后是否删除家庭空间中的中转临时文件
+        casFamilyFolderId: '',          // 家庭空间中转目录ID，空字符串表示自动创建临时目录
+        enableDeleteFamilyTempFile: true, // 秒传完成后清空家庭中转目录并释放配额
       },
       wecom: {
         enable: false,

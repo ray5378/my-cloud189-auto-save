@@ -120,3 +120,5 @@ dist
 *.pem
 /转存助手/*
 .DS_Store
+# Context Memory
+MEMORY.md
