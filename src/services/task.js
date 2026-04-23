@@ -1136,23 +1136,29 @@ class TaskService {
                                 return result;
                             };
 
-                            // ====== 串行处理（避免403限流）======
-                            // 2026-04-23: 家庭API有频率限制（约每分钟4-5次），增加冷却机制
-                            // 经过测试发现API限制是时间窗口限制（每分钟约允许4-5次请求）
-                            const COOLDOWN_AFTER_FILES = 3;  // 每处理3个文件后冷却
-                            const COOLDOWN_DURATION = 30000; // 冷却时间30秒（需足够长让API限制窗口过期）
-                            const FILE_DELAY = 3000;  // 文件间延迟3秒
+                            // ====== 串行处理（分批模式）======
+                            // 2026-04-23: 经过测试发现家庭API限制是会话级别限制，每次执行最多成功4个文件
+                            // 必须重新执行任务才能恢复配额（重试任务检查不会恢复）
+                            // 因此采用分批处理模式：每次最多处理4个成功秒传，剩余文件下次执行继续
+                            const MAX_SUCCESS_PER_SESSION = 4;  // 每次执行最多成功秒传文件数
+                            const FILE_DELAY = 500;  // 文件间延迟500ms（间隔不是问题）
 
-                            logTaskEvent(`[CAS] 开始串行处理 ${finalCasFilesToTransfer.length} 个文件（冷却策略：每${COOLDOWN_AFTER_FILES}个文件暂停${COOLDOWN_DURATION/1000}秒）`);
+                            logTaskEvent(`[CAS] 开始串行处理 ${finalCasFilesToTransfer.length} 个文件（分批模式：每次最多${MAX_SUCCESS_PER_SESSION}个成功秒传）`);
 
                             // 统计计数器
                             let completedCount = 0;
                             let successCount = 0;
                             let skippedCount = 0;
                             let failedCount = 0;
-                            let filesSinceLastCooldown = 0;  // 自上次冷却后处理的文件数
+                            let sessionQuotaExhausted = false;  // 会话配额耗尽标记
 
                             for (const casFile of finalCasFilesToTransfer) {
+                                // 分批控制：成功秒传达到上限后停止本次处理
+                                if (sessionQuotaExhausted) {
+                                    logTaskEvent(`[CAS] ⏸️ 会话配额耗尽，剩余 ${finalCasFilesToTransfer.length - completedCount} 个文件下次执行继续处理`);
+                                    break;
+                                }
+
                                 try {
                                     const result = await processCasFile(casFile);
 
@@ -1172,17 +1178,27 @@ class TaskService {
                                         successCount++;
                                         casResults.push({ fileName: result.realFileName, success: true });
                                         newFiles.push({});
-                                        filesSinceLastCooldown++;  // 成功秒传才计入冷却计数
+
+                                        // 分批控制：检查是否达到本次会话的成功上限
+                                        if (successCount >= MAX_SUCCESS_PER_SESSION) {
+                                            logTaskEvent(`[CAS] 已成功秒传 ${successCount} 个文件，达到会话上限，停止本次处理`);
+                                            sessionQuotaExhausted = true;
+                                        }
                                     } else if (!result.success && result.casFile) {
                                         failedCount++;
                                         failedShareFileIds.add(String(result.casFile.id));
                                         if (result.message) {
                                             logTaskEvent(`[CAS] ❌ ${result.realFileName || casFile.name} - ${result.message}`);
                                         }
+                                        // 遇到403失败，说明配额已耗尽，停止本次处理
+                                        if (result.message && result.message.includes('403')) {
+                                            logTaskEvent(`[CAS] ⏸️ 遇到403限制，会话配额耗尽，停止本次处理`);
+                                            sessionQuotaExhausted = true;
+                                        }
                                     }
 
-                                    // 每处理10个输出一次进度
-                                    if (completedCount % 10 === 0 || completedCount === finalCasFilesToTransfer.length) {
+                                    // 每处理文件输出进度
+                                    if (completedCount % 5 === 0 || completedCount === finalCasFilesToTransfer.length) {
                                         logTaskEvent(`[CAS] 进度 ${completedCount}/${finalCasFilesToTransfer.length}，成功 ${successCount}，跳过 ${skippedCount}，失败 ${failedCount}`);
                                     }
                                 } catch (error) {
@@ -1192,15 +1208,8 @@ class TaskService {
                                     failedShareFileIds.add(String(casFile.id));
                                 }
 
-                                // 冷却机制：每处理N个成功文件后等待
-                                if (filesSinceLastCooldown >= COOLDOWN_AFTER_FILES && completedCount < finalCasFilesToTransfer.length) {
-                                    logTaskEvent(`[CAS] 冷却：已处理${filesSinceLastCooldown}个文件，等待${COOLDOWN_DURATION/1000}秒避开API限流...`);
-                                    await new Promise(resolve => setTimeout(resolve, COOLDOWN_DURATION));
-                                    filesSinceLastCooldown = 0;
-                                } else {
-                                    // 文件间延迟
-                                    await new Promise(resolve => setTimeout(resolve, FILE_DELAY));
-                                }
+                                // 文件间延迟
+                                await new Promise(resolve => setTimeout(resolve, FILE_DELAY));
                             }
 
                             // 最终统计

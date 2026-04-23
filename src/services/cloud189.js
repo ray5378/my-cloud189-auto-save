@@ -323,11 +323,11 @@ class Cloud189Service {
     // 家庭接口秒传（三步：init + check + commit）
     // 关键改动：改用个人RSA签名方式处理家庭接口（参考油猴脚本）
     // 每次请求生成新的随机密钥，不会有密钥使用次数限制问题
-    // 2026-04-23: 增加延迟以应对家庭API频率限制（约每分钟4-5次）
+    // 2026-04-23: 经过测试发现限制是会话级别，间隔时间不是问题
     async familyRapidUpload(fileName, fileSize, fileMd5, sliceMd5, familyId, familyFolderId) {
         const maxRetries = 2;  // 最大重试次数
-        const stepDelay = 2000;  // 步骤间延迟 2秒（应对频率限制）
-        const retryDelay = 60000;  // 403重试延迟 60秒（需等待整个API限制窗口过期）
+        const stepDelay = 500;  // 步骤间延迟 500ms
+        const retryDelay = 500;  // 403重试延迟 500ms
 
         try {
             const sliceSize = this._partSize(fileSize);
