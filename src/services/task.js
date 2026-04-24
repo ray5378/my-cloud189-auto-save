@@ -1008,23 +1008,21 @@ class TaskService {
                             }
                         }
 
-                        // 家庭目录初始化（仅首次）
+                        // 家庭目录初始化（使用账号级配置）
                         if (enableCasFamilyTransfer && this._casFamilyInfo && !casFamilyFolderIdActual) {
                             const familyId = this._casFamilyInfo.familyId;
                             if (!this._casFamilyRootFolderId) {
                                 this._casFamilyRootFolderId = await familyCloud189.getFamilyRootFolderId(familyId);
                             }
-                            if (!casTempFolderCreated && this._casFamilyRootFolderId) {
-                                const tempFolderName = `CAS临时_${Date.now()}`;
-                                const createResult = await familyCloud189.createFamilyFolder(familyId, tempFolderName, this._casFamilyRootFolderId);
-                                if (createResult.success && createResult.folderId) {
-                                    casFamilyFolderIdActual = createResult.folderId;
-                                    casTempFolderCreated = true;
-                                    logTaskEvent(`[家庭中转] 创建临时目录: ${tempFolderName}, ID: ${casFamilyFolderIdActual}`);
-                                } else {
-                                    casFamilyFolderIdActual = this._casFamilyRootFolderId;
-                                    logTaskEvent(`[家庭中转] 创建临时目录失败，使用家庭根目录`);
-                                }
+                            // 获取中转目录（账号级配置 + 同家庭组继承）
+                            const familyFolderIdResult = await this._getFamilyFolderId(familyAccountForTransfer, familyCloud189, familyId, this._casFamilyRootFolderId);
+                            if (familyFolderIdResult.folderId) {
+                                casFamilyFolderIdActual = familyFolderIdResult.folderId;
+                                casTempFolderCreated = familyFolderIdResult.isTemp;
+                                logTaskEvent(`[家庭中转] 中转目录: ${casFamilyFolderIdActual} (${familyFolderIdResult.source})`);
+                            } else {
+                                casFamilyFolderIdActual = this._casFamilyRootFolderId;
+                                logTaskEvent(`[家庭中转] 使用家庭根目录作为中转目录`);
                             }
                         }
 
@@ -1315,8 +1313,8 @@ class TaskService {
                                     });
                                     logTaskEvent(`[家庭中转] ✅ 批次清理完成，配额已恢复`);
 
-                                    // 等待5秒确保云端清理生效
-                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                    // 等待2秒确保云端清理生效
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
                                 } catch (err) {
                                     logTaskEvent(`[家庭中转] 批次清理失败: ${err.message}`);
                                 }
@@ -2349,6 +2347,38 @@ class TaskService {
                 id: accountId
             }
         })
+    }
+
+    // 获取家庭中转目录（账号级配置 + 同家庭组继承）
+    // 返回 { folderId, isTemp, source }
+    async _getFamilyFolderId(account, familyCloud189, familyId, familyRootFolderId) {
+        // 1. 该账号自己配置了目录 → 使用自己的
+        if (account.familyFolderId) {
+            return { folderId: account.familyFolderId, isTemp: false, source: '账号配置' };
+        }
+
+        // 2. 查找同家庭组其他账号的配置（继承）
+        if (account.familyId) {
+            const sameFamilyAccounts = await this.accountRepo.find({
+                where: { familyId: account.familyId }
+            });
+            for (const a of sameFamilyAccounts) {
+                if (a.id !== account.id && a.familyFolderId) {
+                    logTaskEvent(`[家庭中转] 继承账号 ${a.username.replace(/(.{3}).*(.{4})/, '$1****$2')} 的中转目录配置`);
+                    return { folderId: a.familyFolderId, isTemp: false, source: '同家庭组继承' };
+                }
+            }
+        }
+
+        // 3. 都没配置 → 自动创建临时目录
+        const tempFolderName = `CAS临时_${Date.now()}`;
+        const createResult = await familyCloud189.createFamilyFolder(familyId, tempFolderName, familyRootFolderId);
+        if (createResult.success && createResult.folderId) {
+            return { folderId: createResult.folderId, isTemp: true, source: '自动创建临时目录' };
+        }
+
+        // 4. 创建失败 → 使用家庭根目录
+        return { folderId: familyRootFolderId, isTemp: false, source: '家庭根目录（创建失败）' };
     }
 
     // 根据分享链接获取文件目录组合 资源名 资源名/子目录1 资源名/子目录2

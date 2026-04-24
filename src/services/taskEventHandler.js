@@ -138,9 +138,13 @@ class TaskEventHandler {
     }
     async _handleAutoRename(taskCompleteEventDto) {
         try {
-            const newFiles = await taskCompleteEventDto.taskService.autoRename(taskCompleteEventDto.cloud189, taskCompleteEventDto.task);
+            const {task, taskService, cloud189} = taskCompleteEventDto;
+            const newFiles = await taskService.autoRename(cloud189, task);
             if (newFiles.length > 0) {
                 taskCompleteEventDto.fileList = newFiles;
+                // 发送重命名完成通知
+                const message = `✅《${task.resourceName}》重命名完成\n已处理 ${newFiles.length} 个文件`;
+                this.messageUtil.sendMessage(message);
             }
         } catch (error) {
             console.error(error);

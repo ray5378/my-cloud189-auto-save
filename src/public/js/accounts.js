@@ -1,5 +1,7 @@
 let accountsList = []
 let chooseAccount = null
+let familyFolderSelectorOpen = false
+
 // 账号相关功能
 async function fetchAccounts(updateSelect = false) {
     const response = await fetch('/api/accounts');
@@ -9,43 +11,82 @@ async function fetchAccounts(updateSelect = false) {
         window.location.href = '/login';
         return;
     }
-    
+
     if (data.success) {
-        const tbody = document.querySelector('#accountTable tbody');
-        const select = document.querySelector('#accountId');
-        tbody.innerHTML = '';
-        if (updateSelect) {
-            select.innerHTML = '' 
-        }
         accountsList = data.data
-        data.data.forEach(account => {
+
+        // 按家庭组分组展示
+        const familyGroups = {}
+        accountsList.forEach(account => {
+            const fid = account.familyId || 'no_family'
+            if (!familyGroups[fid]) {
+                familyGroups[fid] = { familyId: fid, accounts: [] }
+            }
+            familyGroups[fid].accounts.push(account)
+        })
+
+        const tbody = document.querySelector('#accountTable tbody');
+        tbody.innerHTML = '';
+
+        Object.keys(familyGroups).forEach(fid => {
+            const group = familyGroups[fid]
+            const isSameFamily = fid !== 'no_family' && group.accounts.length > 1
+
+            // 家庭组标题行
             tbody.innerHTML += `
-                <tr>
-                    <td><span class="default-star" onclick="setDefaultAccount(${account.id})" title="设为默认账号">
-                            ${account.isDefault ? '★' : '☆'}
-                        </span>
-                         <button class="btn-primary" onclick="editAccount(${account.id})">修改</button>
-                        <button class="btn-danger" onclick="deleteAccount(${account.id})">删除</button>
-                        </td>
-                    <td data-label='账户名'>${account.username}</td>
-                    <td data-label='别名' onclick="updateAlias(${account.id}, '${account.alias || ''}')">${account.alias}</td>
-                    <td data-label='个人容量'>${formatBytes(account.capacity.cloudCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.cloudCapacityInfo.totalSize)}</td>
-                    <td data-label='家庭容量'>${formatBytes(account.capacity.familyCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.familyCapacityInfo.totalSize)}</td>
-                    <td class='strm-prefix' data-label='媒体目录' style="cursor: pointer;" onclick="updateCloudStrmPrefix(${account.id}, '${account.cloudStrmPrefix || ''}')">${account.cloudStrmPrefix || ''}</td>
-                    <td class='strm-prefix' data-label='本地目录' style="cursor: pointer;" onclick="updateLocalStrmPrefix(${account.id}, '${account.localStrmPrefix || ''}')">${account.localStrmPrefix || ''}</td>
-                    <td class='emby-path-replace' data-label='Emby路径替换' style="cursor: pointer;" onclick="updateEmbyPathReplace(${account.id}, '${account.embyPathReplace || ''}')">${account.embyPathReplace || ''}</td>
+                <tr class="family-group-header" style="background: var(--card-bg);">
+                    <td colspan="8" style="padding: 8px 12px; font-weight: bold; color: var(--text-secondary);">
+                        <span onclick="toggleFamilyGroup('${fid}')">▼</span>
+                        家庭组 ${fid === 'no_family' ? '(无)' : fid.slice(-6)} (${group.accounts.length}个账号)
+                        ${isSameFamily ? '<span style="color: #22c55e; font-size: 12px;">💡 同家庭组账号共用家庭空间</span>' : ''}
+                    </td>
                 </tr>
             `;
-            if (updateSelect) {
-                // n_打头的账号不显示在下拉列表中
+
+            // 账号行
+            group.accounts.forEach(account => {
+                const familyFolderStatus = account.familyFolderId ? '已配置' : (isSameFamily ? '继承' : '自动创建')
+                tbody.innerHTML += `
+                    <tr class="family-group-row" data-family="${fid}">
+                        <td><span class="default-star" onclick="setDefaultAccount(${account.id})" title="设为默认账号">
+                                ${account.isDefault ? '★' : '☆'}
+                            </span>
+                             <button class="btn-primary" onclick="editAccount(${account.id})">修改</button>
+                            <button class="btn-danger" onclick="deleteAccount(${account.id})">删除</button>
+                            </td>
+                        <td data-label='账户名'>${account.username}</td>
+                        <td data-label='别名' onclick="updateAlias(${account.id}, '${account.alias || ''}')">${account.alias || '-'}</td>
+                        <td data-label='个人容量'>${formatBytes(account.capacity.cloudCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.cloudCapacityInfo.totalSize)}</td>
+                        <td data-label='家庭容量'>${formatBytes(account.capacity.familyCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.familyCapacityInfo.totalSize)}</td>
+                        <td data-label='家庭中转目录' style="cursor: pointer; color: ${account.familyFolderId ? '#22c55e' : '#888'};" onclick="updateFamilyFolder(${account.id}, '${account.familyFolderId || ''}', '${account.familyId || ''}')">${familyFolderStatus}</td>
+                        <td class='strm-prefix' data-label='媒体目录' style="cursor: pointer;" onclick="updateCloudStrmPrefix(${account.id}, '${account.cloudStrmPrefix || ''}')">${account.cloudStrmPrefix || '-'}</td>
+                        <td class='strm-prefix' data-label='本地目录' style="cursor: pointer;" onclick="updateLocalStrmPrefix(${account.id}, '${account.localStrmPrefix || ''}')">${account.localStrmPrefix || '-'}</td>
+                    </tr>
+                `;
+            })
+        })
+
+        // 更新任务创建页面的账号下拉
+        if (updateSelect) {
+            const select = document.querySelector('#accountId');
+            select.innerHTML = ''
+            accountsList.forEach(account => {
                 if (!account.username.startsWith('n_')) {
                     select.innerHTML += `
                     <option value="${account.id}" ${account.isDefault?"selected":''}>${account.username}</option>
                 `;
                 }
-            }
-        });
+            })
+        }
     }
+}
+
+// 切换家庭组展开/折叠
+function toggleFamilyGroup(fid) {
+    const rows = document.querySelectorAll(`.family-group-row[data-family="${fid}"]`)
+    rows.forEach(row => {
+        row.style.display = row.style.display === 'none' ? '' : 'none'
+    })
 }
 
 async function deleteAccount(id) {
@@ -315,6 +356,153 @@ async function setDefaultAccount(id) {
             message.warning('设置默认账号失败: ' + data.error);
         }
     } catch (error) {
+        message.warning('操作失败: ' + error.message);
+    }
+}
+
+// 更新家庭中转目录（弹出目录选择器）
+async function updateFamilyFolder(accountId, currentFolderId, familyId) {
+    if (!familyId) {
+        message.warning('该账号无家庭空间，无法配置家庭中转目录');
+        return;
+    }
+
+    // 创建目录选择器弹窗
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'familyFolderModal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>选择家庭中转目录</h3>
+            </div>
+            <div style="padding: 20px;">
+                <p style="color: #888; font-size: 13px; margin-bottom: 15px;">
+                    💡 选择家庭空间中的目录作为中转目录，留空则自动创建临时目录
+                </p>
+                <div id="folderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
+                    <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
+                </div>
+                <div style="margin-top: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="autoCreateFolder" ${!currentFolderId ? 'checked' : ''}>
+                        <span style="font-size: 13px;">自动创建临时目录（每次任务完成后删除）</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-actions" style="padding: 15px 20px; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn-secondary" onclick="closeFamilyFolderModal()">取消</button>
+                <button type="button" class="btn-primary" onclick="confirmFamilyFolder(${accountId})">确认</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+
+    // 加载家庭目录树
+    await loadFamilyFolderTree(accountId, '', currentFolderId);
+}
+
+// 加载家庭目录树
+async function loadFamilyFolderTree(accountId, folderId, selectedFolderId) {
+    const container = document.getElementById('folderTreeContainer');
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/accounts/${accountId}/family/folders?folderId=${folderId}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div style="text-align: center; padding: 20px; color: #e74c3c;">加载失败: ${data.error}</div>`;
+            return;
+        }
+
+        const folders = data.data.folders || [];
+        if (folders.length === 0 && folderId === '') {
+            container.innerHTML = `<div style="text-align: center; padding: 20px; color: #888;">家庭空间无目录，将自动创建</div>`;
+            return;
+        }
+
+        // 构建目录树
+        let html = folderId === '' ? `
+            <div class="folder-item" data-folder-id="" style="padding: 8px; cursor: pointer; border-radius: 4px; ${selectedFolderId === '' ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectFamilyFolder('', '家庭根目录')">
+                📁 家庭根目录（自动创建临时目录）
+            </div>
+        ` : '';
+
+        folders.forEach(folder => {
+            const isSelected = folder.id === selectedFolderId;
+            html += `
+                <div class="folder-item" data-folder-id="${folder.id}" style="padding: 8px; cursor: pointer; border-radius: 4px; margin-left: ${folderId ? '15px' : '0'}; ${isSelected ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectFamilyFolder('${folder.id}', '${folder.name}')">
+                    📁 ${folder.name}
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = `<div style="text-align: center; padding: 20px; color: #e74c3c;">加载失败: ${error.message}</div>`;
+    }
+}
+
+// 选择目录
+function selectFamilyFolder(folderId, folderName) {
+    // 更新选中状态
+    document.querySelectorAll('.folder-item').forEach(item => {
+        item.style.background = '';
+        item.style.color = '';
+    });
+    const selected = document.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
+    if (selected) {
+        selected.style.background = 'var(--primary-color)';
+        selected.style.color = 'white';
+    }
+
+    // 更新checkbox状态
+    const checkbox = document.getElementById('autoCreateFolder');
+    if (checkbox) {
+        checkbox.checked = !folderId;
+    }
+
+    // 保存选中值
+    window.selectedFamilyFolderId = folderId;
+    window.selectedFamilyFolderName = folderName;
+}
+
+// 关闭弹窗
+function closeFamilyFolderModal() {
+    const modal = document.getElementById('familyFolderModal');
+    if (modal) {
+        modal.remove();
+    }
+    window.selectedFamilyFolderId = undefined;
+    window.selectedFamilyFolderName = undefined;
+}
+
+// 确认选择
+async function confirmFamilyFolder(accountId) {
+    const checkbox = document.getElementById('autoCreateFolder');
+    const folderId = checkbox?.checked ? '' : (window.selectedFamilyFolderId || '');
+
+    try {
+        loading.show();
+        const response = await fetch(`/api/accounts/${accountId}/family-folder`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ familyFolderId: folderId })
+        });
+        loading.hide();
+
+        const data = await response.json();
+        if (data.success) {
+            message.success('家庭中转目录配置成功');
+            closeFamilyFolderModal();
+            fetchAccounts(true);
+        } else {
+            message.warning('配置失败: ' + data.error);
+        }
+    } catch (error) {
+        loading.hide();
         message.warning('操作失败: ' + error.message);
     }
 }
