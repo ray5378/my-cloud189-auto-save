@@ -32,13 +32,14 @@ async function fetchAccounts(updateSelect = false) {
             const group = familyGroups[fid]
             const isSameFamily = fid !== 'no_family' && group.accounts.length > 1
 
-            // 家庭组标题行
+            // 家庭组标题行（优化样式）
             tbody.innerHTML += `
-                <tr class="family-group-header" style="background: var(--card-bg);">
-                    <td colspan="8" style="padding: 8px 12px; font-weight: bold; color: var(--text-secondary);">
-                        <span onclick="toggleFamilyGroup('${fid}')">▼</span>
-                        家庭组 ${fid === 'no_family' ? '(无)' : fid.slice(-6)} (${group.accounts.length}个账号)
-                        ${isSameFamily ? '<span style="color: #22c55e; font-size: 12px;">💡 同家庭组账号共用家庭空间</span>' : ''}
+                <tr class="family-group-header" style="background: linear-gradient(90deg, var(--card-bg) 0%, var(--hover-bg, #f0f0f0) 100%); border-left: 3px solid var(--primary-color);">
+                    <td colspan="8" style="padding: 10px 16px; font-weight: 600; color: var(--text-primary);">
+                        <span class="family-toggle-icon" onclick="toggleFamilyGroup('${fid}')" style="cursor: pointer; margin-right: 8px; transition: transform 0.2s;">▼</span>
+                        <span style="font-size: 14px;">家庭组 ${fid === 'no_family' ? '(无家庭空间)' : fid.slice(-6)}</span>
+                        <span style="font-size: 12px; color: #888; margin-left: 8px;">(${group.accounts.length}个账号)</span>
+                        ${isSameFamily ? '<span style="color: #22c55e; font-size: 11px; margin-left: 12px; padding: 2px 8px; background: rgba(34, 197, 94, 0.15); border-radius: 4px;">💡 同家庭组共用空间</span>' : ''}
                     </td>
                 </tr>
             `;
@@ -81,12 +82,21 @@ async function fetchAccounts(updateSelect = false) {
     }
 }
 
-// 切换家庭组展开/折叠
+// 切换家庭组展开/折叠（带图标旋转动画）
 function toggleFamilyGroup(fid) {
     const rows = document.querySelectorAll(`.family-group-row[data-family="${fid}"]`)
+    const headerRow = rows[0]?.previousElementSibling
+    const icon = headerRow?.querySelector('.family-toggle-icon')
+    const isCollapsed = rows[0]?.style.display === 'none'
+
     rows.forEach(row => {
-        row.style.display = row.style.display === 'none' ? '' : 'none'
+        row.style.display = isCollapsed ? '' : 'none'
     })
+
+    // 旋转图标
+    if (icon) {
+        icon.style.transform = isCollapsed ? 'rotate(0deg)' : 'rotate(-90deg)'
+    }
 }
 
 async function deleteAccount(id) {

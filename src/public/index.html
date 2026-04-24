@@ -130,6 +130,15 @@
                                 <input type="text" id="embyPathReplace" placeholder="/影视剧:/cloud/天翼云盘">
                                 <small class="form-text">通知Emby扫库的替换逻辑, 详情查看<a href='https://github.com/1307super/cloud189-auto-save/wiki/3.STRM%E4%B8%8EEmby' target="_blank">wiki</a></small>
                             </div>
+                            <div class="form-group" id="familyFolderFormGroup" style="display: none;">
+                                <label for="familyFolderId">家庭中转目录（可选）</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" id="familyFolderDisplay" readonly placeholder="添加成功后可在账号管理中配置">
+                                    <input type="hidden" id="familyFolderId">
+                                    <button type="button" id="selectFamilyFolderBtn" class="btn-secondary" style="display: none;">选择</button>
+                                </div>
+                                <small class="form-text">💡 家庭组信息将在添加成功后自动检测，届时可配置中转目录</small>
+                            </div>
                         </div>
                         <div class="form-actions">
                             <button type="submit">添加</button>
@@ -471,21 +480,17 @@
                                     <small class="form-text">绕过个人上传配额限制，默认开启</small>
                                 </div>
                             </div>
-                            <div class="settings-item" id="casFamilyFolderItem">
-                                <div class="settings-item-label">家庭空间中转目录</div>
-                                <div class="settings-item-content">
-                                    <div class="settings-inline-inputs">
-                                        <input type="text" id="casFamilyFolderId" placeholder="留空 = 自动创建临时目录（推荐）">
-                                        <button type="button" id="browseFamilyFolderBtn" class="btn-secondary">浏览选择</button>
-                                        <button type="button" id="clearFamilyFolderBtn" class="btn-secondary">清空</button>
-                                    </div>
-                                    <small class="form-text">指定目录：秒传后清空该目录；留空：自动在家庭根目录下创建临时目录并清理</small>
-                                </div>
-                            </div>
                             <div class="settings-item">
                                 <div class="settings-item-content">
                                     <label><input type="checkbox" id="enableDeleteFamilyTempFile">家庭中转后清理临时文件</label>
                                     <small class="form-text">秒传完成后清空家庭中转目录并释放配额，推荐开启</small>
+                                </div>
+                            </div>
+                            <div class="settings-item">
+                                <div class="settings-item-content" style="background: var(--hover-bg, #f5f7fa); border-radius: 8px; padding: 12px;">
+                                    <p style="font-size: 13px; color: #888; margin: 0;">
+                                        💡 家庭中转目录已改为<strong>账号级配置</strong>，请在「账号」页面点击账号的「家庭中转目录」列进行配置
+                                    </p>
                                 </div>
                             </div>
                         </div>
