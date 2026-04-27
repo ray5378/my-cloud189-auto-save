@@ -887,16 +887,24 @@ class TaskService {
             let casFamilyFolderIdActual = ''; // 初始为空，由 _getFamilyFolderId 决定
             let casTempFolderCreated = false; // 标记是否创建了临时目录
 
+            // 诊断日志：记录分享文件数量和过滤情况
+            const totalShareFiles = shareDir.fileListAO.fileList.length;
+            const afterCacheFilter = shareFiles.length;
+            logTaskEvent(`[增量检测] 分享目录文件总数: ${totalShareFiles}, 缓存过滤后: ${afterCacheFilter}, 目标目录已有: ${existingMediaCount}`);
+
             // 排除 .cas 文件，避免进入常规转存流程
             const newFiles = shareFiles
-                .filter(file => 
-                    !file.isFolder && !existingFiles.has(file.md5) 
+                .filter(file =>
+                    !file.isFolder && !existingFiles.has(file.md5)
                    && !existingFileNames.has(file.name)
                    && this._checkFileSuffix(file, enableOnlySaveMedia, mediaSuffixs)
                    && (aiFiltered || this._handleMatchMode(task, file))
                    && !this.isHarmonized(file)
                    && !(enableCasRapidUpload && CasUtils.isCasFile(file.name))
                 );
+
+            // 诊断日志：最终需要处理的新文件数量
+            logTaskEvent(`[增量检测] 最终需处理的新文件: ${newFiles.length} 个`);
 
             // ============== 第1步: 先转存常规视频文件 ==============
             let fileNameList = [];
