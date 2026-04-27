@@ -803,6 +803,9 @@ class TaskService {
              const shareDir = await cloud189.listShareDir(shareId, shareFolderId, shareMode, task.accessCode, isFolder);
              if(shareDir.res_code == "ShareAuditWaiting") {
                 logTaskEvent("分享链接审核中, 等待下次执行")
+                // 恢复任务状态为 pending，避免卡在 processing
+                task.status = 'pending';
+                await this.taskRepo.save(task);
                 return ''
              }
              if (!shareDir?.fileListAO?.fileList) {
@@ -1502,7 +1505,7 @@ class TaskService {
                 } else {
                     // 2. 首次执行/清缓存后执行，但文件都已存在
                     // 需要正确初始化任务状态
-                    task.status = 'processing';
+                    task.status = 'pending';  // 恢复为 pending，避免卡住
                     task.lastFileUpdateTime = new Date();
                     task.currentEpisodes = existingMediaCount;
                     task.retryCount = 0;
@@ -1513,6 +1516,11 @@ class TaskService {
             if (task.totalEpisodes && task.currentEpisodes >= task.totalEpisodes) {
                 task.status = 'completed';
                 logTaskEvent(`${task.resourceName} 已完结`)
+            }
+
+            // 正常执行完成后，如果状态仍是 processing，恢复为 pending（除非已 completed）
+            if (task.status === 'processing') {
+                task.status = 'pending';
             }
 
             const newEvaluatedIds = unprocessedShareFiles
