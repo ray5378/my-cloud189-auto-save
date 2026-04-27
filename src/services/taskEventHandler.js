@@ -14,6 +14,7 @@ class TaskEventHandler {
             return;
         }
         const task = taskCompleteEventDto.task;
+        const taskRepo = taskCompleteEventDto.taskRepo;
         logTaskEvent(` ${task.resourceName} 触发事件:`);
         try {
             await this._handleAutoRename(taskCompleteEventDto);
@@ -27,6 +28,13 @@ class TaskEventHandler {
             logTaskEvent(`任务完成后处理失败: ${error.message}`);
         }
         logTaskEvent(`================事件处理完成================`);
+
+        // 事件处理完成后，恢复任务状态为 pending（除非已 completed）
+        if (taskRepo && task.status === 'processing') {
+            task.status = 'pending';
+            await taskRepo.save(task);
+            logTaskEvent(`任务状态已恢复为 pending`);
+        }
     }
 
     _extractEpisodeInfo(fileName) {
