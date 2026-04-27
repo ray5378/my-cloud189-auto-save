@@ -46,7 +46,17 @@ async function fetchAccounts(updateSelect = false) {
 
             // 账号行
             group.accounts.forEach(account => {
-                const familyFolderStatus = account.familyFolderId ? '已配置' : (isSameFamily ? '继承' : '自动创建')
+                // 显示家庭中转目录状态：已配置显示ID，继承显示来源，自动创建显示提示
+                let familyFolderDisplay = '';
+                if (account.familyFolderId) {
+                    familyFolderDisplay = `已配置 (${account.familyFolderId.slice(-6)})`;
+                } else if (isSameFamily) {
+                    // 查找同家庭组中已配置的账号
+                    const sourceAccount = group.accounts.find(a => a.familyFolderId && a.id !== account.id);
+                    familyFolderDisplay = sourceAccount ? `继承自 ${sourceAccount.username}` : '继承';
+                } else {
+                    familyFolderDisplay = '自动创建';
+                }
                 tbody.innerHTML += `
                     <tr class="family-group-row" data-family="${fid}">
                         <td><span class="default-star" onclick="setDefaultAccount(${account.id})" title="设为默认账号">
@@ -59,7 +69,7 @@ async function fetchAccounts(updateSelect = false) {
                         <td data-label='别名' onclick="updateAlias(${account.id}, '${account.alias || ''}')">${account.alias || '-'}</td>
                         <td data-label='个人容量'>${formatBytes(account.capacity.cloudCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.cloudCapacityInfo.totalSize)}</td>
                         <td data-label='家庭容量'>${formatBytes(account.capacity.familyCapacityInfo.usedSize) + '/' + formatBytes(account.capacity.familyCapacityInfo.totalSize)}</td>
-                        <td data-label='家庭中转目录' style="cursor: pointer; color: ${account.familyFolderId ? '#22c55e' : '#888'};" onclick="updateFamilyFolder(${account.id}, '${account.familyFolderId || ''}', '${account.familyId || ''}')">${familyFolderStatus}</td>
+                        <td data-label='家庭中转目录' style="cursor: pointer; color: ${account.familyFolderId ? '#22c55e' : '#888'};" onclick="updateFamilyFolder(${account.id}, '${account.familyFolderId || ''}', '${account.familyId || ''}')">${familyFolderDisplay}</td>
                         <td class='strm-prefix' data-label='媒体目录' style="cursor: pointer;" onclick="updateCloudStrmPrefix(${account.id}, '${account.cloudStrmPrefix || ''}')">${account.cloudStrmPrefix || '-'}</td>
                         <td class='strm-prefix' data-label='本地目录' style="cursor: pointer;" onclick="updateLocalStrmPrefix(${account.id}, '${account.localStrmPrefix || ''}')">${account.localStrmPrefix || '-'}</td>
                     </tr>
