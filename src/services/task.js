@@ -762,6 +762,38 @@ class TaskService {
             task.status = 'processing';
             await this.taskRepo.save(task);
 
+            // ====== 从任务名中提取 TMDB ID 并更新到任务对象 ======
+            // 支持 {tmdb-71233} 格式，确保任务封面/简介能正确显示
+            if (!task.tmdbId) {
+                const tmdbIdMatch = task.resourceName.match(/(?:^|[\[{(\s_/])tmdb(?:id)?[-=:_ ](\d+)(?:$|[\]})\s_/])/i);
+                if (tmdbIdMatch) {
+                    const extractedTmdbId = parseInt(tmdbIdMatch[1]);
+                    task.tmdbId = extractedTmdbId;
+                    logTaskEvent(`[任务执行] 从任务名提取到 TMDB ID: ${extractedTmdbId}，已更新到任务对象`);
+                    // 如果未指定 videoType，尝试通过 TMDB API 判断类型
+                    const tmdbApiKey = ConfigService.getConfigValue('tmdb.tmdbApiKey');
+                    if (tmdbApiKey && !task.videoType) {
+                        try {
+                            const tmdbService = new TMDBService();
+                            const tvDetail = await tmdbService.getTVDetails(extractedTmdbId);
+                            if (tvDetail && tvDetail.title) {
+                                task.videoType = 'tv';
+                                task.tmdbTitle = tvDetail.title;
+                            } else {
+                                const movieDetail = await tmdbService.getMovieDetails(extractedTmdbId);
+                                if (movieDetail && movieDetail.title) {
+                                    task.videoType = 'movie';
+                                    task.tmdbTitle = movieDetail.title;
+                                }
+                            }
+                        } catch (e) {
+                            logTaskEvent(`[任务执行] TMDB ID ${extractedTmdbId} 类型检测失败: ${e.message}`);
+                        }
+                    }
+                    await this.taskRepo.save(task);
+                }
+            }
+
             const account = await this.accountRepo.findOneBy({ id: task.accountId });
             if (!account) {
                 logTaskEvent(`账号不存在，accountId: ${task.accountId}`);
