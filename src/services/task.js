@@ -1620,17 +1620,10 @@ class TaskService {
                 logTaskEvent(`${task.resourceName} 已完结`)
             }
 
-            // 正常执行完成后，恢复任务状态
-            // 有剧集内容且未完结 → 保持 processing（追剧中）
-            // 无内容或已完结 → pending（等待中）
+            // 正常执行完成后，恢复为 pending（允许下次执行）
+            // 前端会根据 currentEpisodes 显示"追剧中"或"等待中"
             if (task.status === 'processing' && task.status !== 'completed') {
-                if (task.currentEpisodes > 0 || existingMediaCount > 0) {
-                    // 有内容，保持追剧中状态
-                    task.status = 'processing';
-                } else {
-                    // 无内容，恢复等待中
-                    task.status = 'pending';
-                }
+                task.status = 'pending';
             }
 
             const newEvaluatedIds = unprocessedShareFiles

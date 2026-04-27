@@ -336,7 +336,7 @@ async function fetchTasks() {
                     </td>
                     <td data-label="转存时间" style="font-size: 13px; color: #3b82f6; font-weight: 500;">${formatDateTime(task.lastFileUpdateTime)}</td>
                     <td data-label="备注">${task.remark?task.remark:''}</td>
-                    <td data-label="状态"><span class="status-badge status-${task.status}">${formatStatus(task.status)}</span>${task.status === 'failed' && task.lastError ? `<span style="color: #ff4d4f; font-size: 11px; margin-left: 5px;">(${task.lastError.slice(0, 30)}${task.lastError.length > 30 ? '...' : ''})</span>` : ''}</td>
+                    <td data-label="状态"><span class="status-badge status-${task.status}">${formatTaskStatus(task)}</span>${task.status === 'failed' && task.lastError ? `<span style="color: #ff4d4f; font-size: 11px; margin-left: 5px;">(${task.lastError.slice(0, 30)}${task.lastError.length > 30 ? '...' : ''})</span>` : ''}</td>
                 </tr>
             `;
         });
@@ -1274,6 +1274,19 @@ const statusOptions = {
 // 格式化状态
 function formatStatus(status) {
     return statusOptions[status] || status;
+}
+
+// 根据任务状态和剧集数量显示更精确的状态文字
+function formatTaskStatus(task) {
+    if (task.status === 'completed') return '已完结';
+    if (task.status === 'failed') return '失败';
+    if (task.status === 'processing') return '追剧中';
+    if (task.status === 'pending') {
+        // 有剧集内容显示追剧中，无内容显示等待中
+        if (task.currentEpisodes > 0) return '追剧中';
+        return '等待中';
+    }
+    return task.status;
 }
 
 // 监听enableCron的变化
