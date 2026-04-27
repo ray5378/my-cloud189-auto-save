@@ -181,11 +181,212 @@ async function editAccount(id) {
     document.getElementById('cloudStrmPrefix').value = chooseAccount.cloudStrmPrefix || '';
     document.getElementById('localStrmPrefix').value = chooseAccount.localStrmPrefix || '';
     document.getElementById('embyPathReplace').value = chooseAccount.embyPathReplace || '';
+
+    // 填充家庭中转目录
+    const familyFolderIdInput = document.getElementById('familyFolderId');
+    const familyFolderDisplayInput = document.getElementById('familyFolderDisplay');
+    const clearBtn = document.getElementById('clearFamilyFolderBtn');
+    const selectBtn = document.getElementById('selectFamilyFolderBtn');
+
+    if (chooseAccount.familyFolderId) {
+        familyFolderIdInput.value = chooseAccount.familyFolderId;
+        familyFolderDisplayInput.value = `已配置 (${chooseAccount.familyFolderId.slice(-6)})`;
+        clearBtn.style.display = 'inline-block';
+    } else {
+        familyFolderIdInput.value = '';
+        familyFolderDisplayInput.value = '自动创建临时目录';
+        clearBtn.style.display = 'none';
+    }
+
+    // 设置选择按钮事件
+    selectBtn.onclick = () => {
+        if (chooseAccount.familyId) {
+            openFamilyFolderSelectorForEdit(chooseAccount.id, chooseAccount.familyFolderId || '', chooseAccount.familyId);
+        } else {
+            message.warning('该账号无家庭空间，无法配置家庭中转目录');
+        }
+    };
+
+    // 设置清空按钮事件
+    clearBtn.onclick = () => {
+        familyFolderIdInput.value = '';
+        familyFolderDisplayInput.value = '自动创建临时目录';
+        clearBtn.style.display = 'none';
+    };
+
     // 账号不允许修改
     document.getElementById('username').setAttribute('readonly', true )
     // 修改提交按钮文本
     const submitBtn = modal.querySelector('button[type="submit"]');
     submitBtn.textContent = '修改';
+}
+
+// 编辑账号时弹出家庭中转目录选择器
+async function openFamilyFolderSelectorForEdit(accountId, currentFolderId, familyId) {
+    // 创建目录选择器弹窗
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'familyFolderEditModal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>选择家庭中转目录</h3>
+                <button class="close-btn" onclick="closeFamilyFolderEditModal()">×</button>
+            </div>
+            <div style="padding: 20px;">
+                <div id="currentFolderDisplay" style="margin-bottom: 10px; padding: 10px; background: var(--bg-color); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>
+                        <strong>当前：</strong>
+                        <span id="editCurrentFolderText">${currentFolderId ? '已配置 (' + currentFolderId.slice(-6) + ')' : '自动创建临时目录'}</span>
+                    </span>
+                    <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="clearEditFolderSelection()">清空</button>
+                </div>
+                <div id="editFolderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
+                    <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
+                </div>
+            </div>
+            <div class="form-actions" style="padding: 15px 20px; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn-secondary" onclick="closeFamilyFolderEditModal()">取消</button>
+                <button type="button" class="btn-primary" onclick="confirmEditFamilyFolder()">确认</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+
+    // 初始化选中值
+    window.editSelectedFolderId = currentFolderId;
+    window.editSelectedFolderName = currentFolderId ? '已配置' : '自动创建';
+    await loadEditFamilyFolderTree(accountId, '', currentFolderId);
+}
+
+// 加载编辑模式的家庭目录树
+async function loadEditFamilyFolderTree(accountId, folderId, selectedFolderId) {
+    const container = document.getElementById('editFolderTreeContainer');
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/accounts/${accountId}/family/folders?folderId=${folderId}`);
+        const data = await response.json();
+
+        if (!data.success) {
+            container.innerHTML = `<div style="text-align: center; padding: 20px; color: #e74c3c;">加载失败: ${data.error}</div>`;
+            return;
+        }
+
+        const folders = data.data.folders || [];
+        if (folders.length === 0 && folderId === '') {
+            container.innerHTML = `<div style="text-align: center; padding: 20px; color: #888;">家庭空间无目录，将自动创建</div>`;
+            return;
+        }
+
+        // 构建目录树
+        let html = folderId === '' ? `
+            <div class="edit-folder-item" data-folder-id="" style="padding: 8px; cursor: pointer; border-radius: 4px; ${!selectedFolderId ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectEditFolder('', '家庭根目录')">
+                📁 家庭根目录（自动创建临时目录）
+            </div>
+        ` : '';
+
+        folders.forEach(folder => {
+            const isSelected = folder.id === selectedFolderId;
+            html += `
+                <div class="edit-folder-item" data-folder-id="${folder.id}" style="padding: 8px; cursor: pointer; border-radius: 4px; margin-left: ${folderId ? '15px' : '0'}; ${isSelected ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectEditFolder('${folder.id}', '${folder.name}')">
+                    📁 ${folder.name}
+                </div>
+            `;
+        });
+
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = `<div style="text-align: center; padding: 20px; color: #e74c3c;">加载失败: ${error.message}</div>`;
+    }
+}
+
+// 编辑模式下选择目录
+function selectEditFolder(folderId, folderName) {
+    // 更新选中状态
+    document.querySelectorAll('.edit-folder-item').forEach(item => {
+        item.style.background = '';
+        item.style.color = '';
+    });
+    const selected = document.querySelector(`.edit-folder-item[data-folder-id="${folderId}"]`);
+    if (selected) {
+        selected.style.background = 'var(--primary-color)';
+        selected.style.color = 'white';
+    }
+
+    // 更新当前选择显示
+    const currentFolderText = document.getElementById('editCurrentFolderText');
+    if (currentFolderText) {
+        if (folderId) {
+            currentFolderText.textContent = `已选择: ${folderName} (${folderId.slice(-6)})`;
+        } else {
+            currentFolderText.textContent = '自动创建临时目录';
+        }
+    }
+
+    // 保存选中值
+    window.editSelectedFolderId = folderId;
+    window.editSelectedFolderName = folderName;
+}
+
+// 编辑模式下清空选择
+function clearEditFolderSelection() {
+    window.editSelectedFolderId = '';
+    window.editSelectedFolderName = '自动创建';
+
+    // 更新显示
+    const currentFolderText = document.getElementById('editCurrentFolderText');
+    if (currentFolderText) {
+        currentFolderText.textContent = '自动创建临时目录';
+    }
+
+    // 清除目录树选中状态
+    document.querySelectorAll('.edit-folder-item').forEach(item => {
+        item.style.background = '';
+        item.style.color = '';
+    });
+
+    // 选中根目录项
+    const rootItem = document.querySelector('.edit-folder-item[data-folder-id=""]');
+    if (rootItem) {
+        rootItem.style.background = 'var(--primary-color)';
+        rootItem.style.color = 'white';
+    }
+
+    message.success('已恢复为自动创建临时目录');
+}
+
+// 关闭编辑模式弹窗
+function closeFamilyFolderEditModal() {
+    const modal = document.getElementById('familyFolderEditModal');
+    if (modal) {
+        modal.remove();
+    }
+    window.editSelectedFolderId = undefined;
+    window.editSelectedFolderName = undefined;
+}
+
+// 确认编辑模式选择
+function confirmEditFamilyFolder() {
+    const folderId = window.editSelectedFolderId || '';
+
+    // 更新表单显示
+    const familyFolderIdInput = document.getElementById('familyFolderId');
+    const familyFolderDisplayInput = document.getElementById('familyFolderDisplay');
+    const clearBtn = document.getElementById('clearFamilyFolderBtn');
+
+    familyFolderIdInput.value = folderId;
+    if (folderId) {
+        familyFolderDisplayInput.value = `已选择 (${folderId.slice(-6)})`;
+        clearBtn.style.display = 'inline-block';
+    } else {
+        familyFolderDisplayInput.value = '自动创建临时目录';
+        clearBtn.style.display = 'none';
+    }
+
+    closeFamilyFolderEditModal();
+    message.success('已选择家庭中转目录');
 }
 
 async function createAccount() {
@@ -197,6 +398,7 @@ async function createAccount() {
     const cloudStrmPrefix = document.getElementById('cloudStrmPrefix').value;
     const localStrmPrefix = document.getElementById('localStrmPrefix').value;
     const embyPathReplace = document.getElementById('embyPathReplace').value;
+    const familyFolderId = document.getElementById('familyFolderId').value;
     let validateCode = "";
     if (validateCodeDom) {
         validateCode = validateCodeDom.value;
@@ -216,7 +418,7 @@ async function createAccount() {
     const response = await fetch('/api/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: chooseAccount?.id, username, password, cookies, alias, validateCode, cloudStrmPrefix, localStrmPrefix, embyPathReplace })
+        body: JSON.stringify({ id: chooseAccount?.id, username, password, cookies, alias, validateCode, cloudStrmPrefix, localStrmPrefix, embyPathReplace, familyFolderId })
     });
     const data = await response.json();
     if (data.success) {
