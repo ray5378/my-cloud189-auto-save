@@ -813,6 +813,21 @@ class TaskService {
                     if (shareCode) {
                         const freshShareInfo = await this.getShareInfo(cloud189, shareCode);
                         if (freshShareInfo) {
+                            // 检查分享链接是否失效
+                            if (freshShareInfo.res_code === 'ShareNotFound' ||
+                                freshShareInfo.res_code === 'ShareExpired' ||
+                                freshShareInfo.res_code === 'ShareDeleted' ||
+                                freshShareInfo.res_message?.includes('不存在') ||
+                                freshShareInfo.res_message?.includes('已失效') ||
+                                freshShareInfo.res_message?.includes('已过期')) {
+                                logTaskEvent(`⚠️ 分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`);
+                                task.lastError = `分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`;
+                                task.status = 'failed';
+                                await this.taskRepo.save(task);
+                                // 发送失效通知
+                                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接已失效\n错误: ${freshShareInfo.res_message || '链接不存在'}\n请更新任务配置中的分享链接`);
+                                return '';
+                            }
                             if (freshShareInfo.shareMode == 1 && task.accessCode) {
                                 const accessCodeResp = await cloud189.checkAccessCode(shareCode, task.accessCode);
                                 if (accessCodeResp?.shareId) freshShareInfo.shareId = accessCodeResp.shareId;
@@ -824,6 +839,14 @@ class TaskService {
                             if (!task.shareFolderName && shareFolderId === task.shareFileId) {
                                 shareFolderId = freshShareInfo.fileId;
                             }
+                        } else {
+                            // getShareInfo 返回 null 表示请求失败，链接可能失效
+                            logTaskEvent(`⚠️ 无法获取分享信息，链接可能已失效`);
+                            task.lastError = '无法获取分享信息，链接可能已失效';
+                            task.status = 'failed';
+                            await this.taskRepo.save(task);
+                            this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接可能已失效\n请检查链接是否正常`);
+                            return '';
                         }
                     }
                 } catch (e) {
