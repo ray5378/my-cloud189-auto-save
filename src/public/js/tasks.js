@@ -336,7 +336,7 @@ async function fetchTasks() {
                     </td>
                     <td data-label="转存时间" style="font-size: 13px; color: #3b82f6; font-weight: 500;">${formatDateTime(task.lastFileUpdateTime)}</td>
                     <td data-label="备注">${task.remark?task.remark:''}</td>
-                    <td data-label="状态"><span class="status-badge status-${task.status}">${formatStatus(task.status)}</span></td>
+                    <td data-label="状态"><span class="status-badge status-${task.status}">${formatStatus(task.status)}</span>${task.status === 'failed' && task.lastError ? `<span style="color: #ff4d4f; font-size: 11px; margin-left: 5px;">(${task.lastError.slice(0, 30)}${task.lastError.length > 30 ? '...' : ''})</span>` : ''}</td>
                 </tr>
             `;
         });
