@@ -895,7 +895,7 @@ class TaskService {
                 throw new Error('获取文件列表失败');
             }
             // 诊断日志：检查 shareFolderId 配置
-            logTaskEvent(`[分享检测] shareId: ${shareId?.slice(-6)}, shareFolderId: ${shareFolderId?.slice(-6) || '根目录'}, shareMode: ${shareMode}, 文件数: ${shareDir.fileListAO.fileList.length}`);
+            logTaskEvent(`[分享检测] shareId: ${shareId ? String(shareId).slice(-6) : 'null'}, shareFolderId: ${shareFolderId ? String(shareFolderId).slice(-6) : '根目录'}, shareMode: ${shareMode}, 文件数: ${shareDir.fileListAO?.fileList?.length || 0}`);
             let shareFiles = [...shareDir.fileListAO.fileList];            
             const cachedFileIds = await taskCacheManager.getCache(task.id);
             const unprocessedShareFiles = shareFiles.filter(f => f.isFolder || !cachedFileIds.has(String(f.id)));
