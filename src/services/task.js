@@ -193,21 +193,24 @@ class TaskService {
     _extractCleanTitle(fileName) {
         let name = fileName;
 
+        // 0. 移除常见任务后缀（中文）- 用户创建任务时添加的说明
+        name = name.replace(/\s*(仅秒传|秒传|自动保存|自动转存|追剧|更新|订阅)$/gi, '');
+
         // 1. 移除文件扩展名
         name = name.replace(/\.(mkv|mp4|avi|rmvb|wmv|m2ts|ts|flv|mov|iso|mpg|rm)$/i, '');
 
-        // 2. 移除季集信息 (S01E01, S01, E01, 第1集, 第1季 等)
-        name = name.replace(/\.S\d+[-_ ]*E\d+/gi, '');  // S01E01
-        name = name.replace(/\.S\d+/gi, '');            // S01
-        name = name.replace(/\.E[P]?\d+/gi, '');        // E01, EP01
-        name = name.replace(/\.第\s*\d+\s*[集季话]/gi, ''); // 第1集, 第1季, 第1话
-
-        // 3. 移除年份 (单独提取年份，这里移除)
+        // 2. 先提取并移除年份（在移除其他内容前）
         // 年份格式: .2026. 或 (2026) 或 【2026】
         name = name.replace(/\.\d{4}\./g, '.');         // .2026.
         name = name.replace(/[\[\({【（]\d{4}[\]\)}】）]/g, ''); // (2026)
 
-        // 4. 移除技术参数（常见视频/音频编码格式）
+        // 3. 移除季集信息 (S01E01, S01, E01, 第1集, 第1季 等)
+        name = name.replace(/\.S\d+[-_ ]*E\d+/gi, '.');  // S01E01
+        name = name.replace(/\.S\d+/gi, '.');            // S01
+        name = name.replace(/\.E[P]?\d+/gi, '.');        // E01, EP01
+        name = name.replace(/\.第\s*\d+\s*[集季话]/gi, '.'); // 第1集, 第1季, 第1话
+
+        // 4. 移除技术参数（常见视频/音频编码格式）- 使用更宽松的匹配
         const techParams = [
             // 分辨率
             '2160p', '1080p', '720p', '480p', '360p', '4K', '8K',
@@ -216,26 +219,36 @@ class TaskService {
             // 视频质量
             'SDR', 'HDR', 'HDR10', 'DV', 'DolbyVision', 'Hybrid', 'REMUX', 'BluRay', 'WEB-DL', 'WEBRip',
             // 音频编码
-            'AAC', 'AC3', 'DTS', 'DTS-HD', 'DTS-MA', 'TrueHD', 'FLAC', 'MP3', 'DDP', 'DD', ' Atmos',
-            // 音频声道
-            '2\\.0', '5\\.1', '7\\.1', '2ch', '6ch', '8ch',
+            'AAC', 'AC3', 'DTS', 'DTS-HD', 'DTS-MA', 'TrueHD', 'FLAC', 'MP3', 'DDP', 'DD',
             // 帧率
-            '23\\.976fps', '24fps', '25fps', '30fps', '60fps', 'fps',
+            'fps', '25fps', '30fps', '24fps', '60fps', '23\\.976fps',
             // 位深
             '10-bit', '8-bit', '10bit', '8bit',
+            // 音频声道（数字格式）
+            '2\\.0', '5\\.1', '7\\.1', '2ch', '6ch', '8ch',
+            // Atmos
+            'Atmos',
             // 来源/组名
             'HiveWeb', 'Hive', 'WEB', 'NTB', 'FRDS', 'CMCT', 'ADWeb', 'Bilibili', 'iQIYI', 'Youku',
             // 其他
             'SD', 'HD', 'UHD', 'Complete', 'Final', 'OVA', 'SP', 'OAD'
         ];
-        const techPattern = new RegExp(`\\.(${techParams.join('|')})(\\.|$|\\s|@)`, 'gi');
-        name = name.replace(techPattern, '.');
+        // 匹配格式: .参数 或 参数. 或 参数后面有空格/@
+        for (const param of techParams) {
+            // 移除点号包裹的参数
+            name = name.replace(new RegExp(`\\.${param}\\.?`, 'gi'), '.');
+            // 移除空格分隔的参数
+            name = name.replace(new RegExp(`\\s+${param}(\\s|\\.|$|@)`, 'gi'), ' ');
+            // 移除 @ 前缀的参数
+            name = name.replace(new RegExp(`@${param}`, 'gi'), '');
+        }
 
         // 5. 移除 @xxx 后缀（如 @HiveWeb）
         name = name.replace(/@[\w.-]+/gi, '');
 
-        // 6. 清理多余点号和空格
+        // 6. 清理多余点号和空格（多次清理确保干净）
         name = name.replace(/\.\./g, '.');
+        name = name.replace(/\.\./g, '.');  // 再次清理（可能产生新的双点）
         name = name.replace(/\.$/, '');
         name = name.replace(/^\./, '');
         name = name.trim();
@@ -243,6 +256,11 @@ class TaskService {
         // 7. 将点号替换为空格（更符合 TMDB 搜索格式）
         name = name.replace(/\./g, ' ');
         name = name.replace(/\s+/g, ' ').trim();
+
+        // 8. 移除残留的数字孤立（可能是帧率/声道残留）
+        name = name.replace(/\s+\d+\s+/g, ' ');  // 孤立数字
+        name = name.replace(/\s+\d+$/g, '');     // 末尾数字
+        name = name.trim();
 
         return name;
     }

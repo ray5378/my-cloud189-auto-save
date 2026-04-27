@@ -757,6 +757,16 @@ AppDataSource.initialize().then(async () => {
                     }
                 }
                 messageUtil.sendMessage(message);
+
+                // 重命名后触发 Emby 扫库
+                const { EmbyService } = require('./services/emby');
+                const embyService = new EmbyService(messageUtil);
+                try {
+                    logTaskEvent(`执行Emby通知: ${task.resourceName}`);
+                    await embyService.notifyEmby(task);
+                } catch (e) {
+                    logTaskEvent(`Emby扫库失败: ${e.message}`);
+                }
             } else {
                 message = `ℹ️《${task.resourceName}》无需重命名（文件已是正确格式或无文件）`;
             }
