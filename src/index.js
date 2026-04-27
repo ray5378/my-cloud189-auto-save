@@ -228,7 +228,7 @@ AppDataSource.initialize().then(async () => {
                 account.familyFolderId = req.body.familyFolderId;
             }
             await accountRepo.save(account);
-            res.json({ success: true, data: { familyId: account.familyId } });
+            res.json({ success: true, data: { accountId: account.id, familyId: account.familyId } });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
@@ -693,9 +693,19 @@ AppDataSource.initialize().then(async () => {
             });
             if (!task) throw new Error('任务不存在');
             // 检查任务是否正在执行，防止并发重复执行
+            // 但如果任务超过 5 分钟仍为 processing，可能是上次异常退出，强制恢复
             if (task.status === 'processing') {
-                logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}]正在执行中，跳过本次触发`);
-                return res.json({ success: true, data: null, message: '任务正在执行中' });
+                const lastCheckTime = task.lastCheckTime ? new Date(task.lastCheckTime) : null;
+                const now = new Date();
+                const fiveMinutes = 5 * 60 * 1000;
+                if (lastCheckTime && (now.getTime() - lastCheckTime.getTime() > fiveMinutes)) {
+                    logTaskEvent(`任务[${task.resourceName}] processing 状态超时(>5分钟)，自动恢复为 pending`);
+                    task.status = 'pending';
+                    await taskRepo.save(task);
+                } else {
+                    logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}]正在执行中，跳过本次触发`);
+                    return res.json({ success: true, data: null, message: '任务正在执行中' });
+                }
             }
             logTaskEvent(`================================`);
             const taskName = task.shareFolderName?(task.resourceName + '/' + task.shareFolderName): task.resourceName || '未知'

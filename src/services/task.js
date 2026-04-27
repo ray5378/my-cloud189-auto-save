@@ -813,6 +813,23 @@ class TaskService {
                     if (shareCode) {
                         const freshShareInfo = await this.getShareInfo(cloud189, shareCode);
                         if (freshShareInfo) {
+                            // 检查分享链接是否失效
+                            if (freshShareInfo.res_code === 'ShareNotFound' ||
+                                freshShareInfo.res_code === 'ShareExpired' ||
+                                freshShareInfo.res_code === 'ShareDeleted' ||
+                                freshShareInfo.res_code === 'ShareAuditFailed' ||
+                                freshShareInfo.res_message?.includes('不存在') ||
+                                freshShareInfo.res_message?.includes('已失效') ||
+                                freshShareInfo.res_message?.includes('已过期') ||
+                                freshShareInfo.res_message?.includes('审核不通过')) {
+                                logTaskEvent(`⚠️ 分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`);
+                                task.lastError = `分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`;
+                                task.status = 'failed';
+                                await this.taskRepo.save(task);
+                                // 发送失效通知
+                                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接已失效\n错误: ${freshShareInfo.res_message || '链接不存在'}\n请更新任务配置中的分享链接`);
+                                return '';
+                            }
                             if (freshShareInfo.shareMode == 1 && task.accessCode) {
                                 const accessCodeResp = await cloud189.checkAccessCode(shareCode, task.accessCode);
                                 if (accessCodeResp?.shareId) freshShareInfo.shareId = accessCodeResp.shareId;
@@ -824,6 +841,14 @@ class TaskService {
                             if (!task.shareFolderName && shareFolderId === task.shareFileId) {
                                 shareFolderId = freshShareInfo.fileId;
                             }
+                        } else {
+                            // getShareInfo 返回 null 表示请求失败，链接可能失效
+                            logTaskEvent(`⚠️ 无法获取分享信息，链接可能已失效`);
+                            task.lastError = '无法获取分享信息，链接可能已失效';
+                            task.status = 'failed';
+                            await this.taskRepo.save(task);
+                            this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接可能已失效\n请检查链接是否正常`);
+                            return '';
                         }
                     }
                 } catch (e) {
@@ -833,6 +858,15 @@ class TaskService {
 
              // 获取分享文件列表并进行增量转存
              const shareDir = await cloud189.listShareDir(shareId, shareFolderId, shareMode, task.accessCode, isFolder);
+             // 先检查 shareDir 是否存在
+             if (!shareDir) {
+                logTaskEvent("⚠️ 无法获取分享目录，链接可能已失效");
+                task.lastError = '无法获取分享目录，链接可能已失效';
+                task.status = 'failed';
+                await this.taskRepo.save(task);
+                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 无法获取分享目录\n请检查分享链接是否正常`);
+                return '';
+             }
              if(shareDir.res_code == "ShareAuditWaiting") {
                 logTaskEvent("分享链接审核中, 等待下次执行")
                 // 恢复任务状态为 pending，避免卡在 processing
@@ -840,10 +874,28 @@ class TaskService {
                 await this.taskRepo.save(task);
                 return ''
              }
+             // 检查其他失效错误码
+             if (shareDir.res_code === 'ShareNotFound' ||
+                 shareDir.res_code === 'ShareExpired' ||
+                 shareDir.res_code === 'ShareDeleted' ||
+                 shareDir.res_code === 'ShareInfoNotFound' ||
+                 shareDir.res_code === 'ShareAuditNotPass' ||
+                 shareDir.res_message?.includes('不存在') ||
+                 shareDir.res_message?.includes('已失效') ||
+                 shareDir.res_message?.includes('审核不通过')) {
+                logTaskEvent(`⚠️ 分享链接已失效: ${shareDir.res_message || shareDir.res_code}`);
+                task.lastError = `分享链接已失效: ${shareDir.res_message || shareDir.res_code}`;
+                task.status = 'failed';
+                await this.taskRepo.save(task);
+                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接已失效\n错误: ${shareDir.res_message || shareDir.res_code}\n请更新任务配置中的分享链接`);
+                return '';
+             }
              if (!shareDir?.fileListAO?.fileList) {
                 logTaskEvent("获取文件列表失败: " + JSON.stringify(shareDir));
                 throw new Error('获取文件列表失败');
             }
+            // 诊断日志：检查 shareFolderId 配置
+            logTaskEvent(`[分享检测] shareId: ${shareId ? String(shareId).slice(-6) : 'null'}, shareFolderId: ${shareFolderId ? String(shareFolderId).slice(-6) : '根目录'}, shareMode: ${shareMode}, 文件数: ${shareDir.fileListAO?.fileList?.length || 0}`);
             let shareFiles = [...shareDir.fileListAO.fileList];            
             const cachedFileIds = await taskCacheManager.getCache(task.id);
             const unprocessedShareFiles = shareFiles.filter(f => f.isFolder || !cachedFileIds.has(String(f.id)));
@@ -887,16 +939,24 @@ class TaskService {
             let casFamilyFolderIdActual = ''; // 初始为空，由 _getFamilyFolderId 决定
             let casTempFolderCreated = false; // 标记是否创建了临时目录
 
+            // 诊断日志：记录分享文件数量和过滤情况
+            const totalShareFiles = shareDir.fileListAO.fileList.length;
+            const afterCacheFilter = shareFiles.length;
+            logTaskEvent(`[增量检测] 分享目录文件总数: ${totalShareFiles}, 缓存过滤后: ${afterCacheFilter}, 目标目录已有: ${existingMediaCount}`);
+
             // 排除 .cas 文件，避免进入常规转存流程
             const newFiles = shareFiles
-                .filter(file => 
-                    !file.isFolder && !existingFiles.has(file.md5) 
+                .filter(file =>
+                    !file.isFolder && !existingFiles.has(file.md5)
                    && !existingFileNames.has(file.name)
                    && this._checkFileSuffix(file, enableOnlySaveMedia, mediaSuffixs)
                    && (aiFiltered || this._handleMatchMode(task, file))
                    && !this.isHarmonized(file)
                    && !(enableCasRapidUpload && CasUtils.isCasFile(file.name))
                 );
+
+            // 诊断日志：最终需要处理的新文件数量
+            logTaskEvent(`[增量检测] 最终需处理的新文件: ${newFiles.length} 个`);
 
             // ============== 第1步: 先转存常规视频文件 ==============
             let fileNameList = [];
@@ -1543,7 +1603,7 @@ class TaskService {
                         task.status = 'completed';
                     }
                     task.currentEpisodes = existingMediaCount;
-                    logTaskEvent(`${task.resourceName} 没有增量剧集`);
+                    logTaskEvent(`${task.resourceName} 没有增量剧集，当前剧集数: ${existingMediaCount}`);
                 } else {
                     // 2. 首次执行/清缓存后执行，但文件都已存在
                     // 需要正确初始化任务状态
@@ -1560,10 +1620,13 @@ class TaskService {
                 logTaskEvent(`${task.resourceName} 已完结`)
             }
 
-            // 正常执行完成后，如果状态仍是 processing，恢复为 pending（除非已 completed）
+            // 正常执行完成后，恢复为 pending（允许下次执行）
+            // 前端会根据 currentEpisodes 显示"追剧中"或"等待中"
             if (task.status === 'processing') {
                 task.status = 'pending';
             }
+
+            logTaskEvent(`[任务状态] ${task.resourceName} 最终状态: ${task.status}, currentEpisodes: ${task.currentEpisodes}`);
 
             const newEvaluatedIds = unprocessedShareFiles
                 .filter(f => !f.isFolder && !failedShareFileIds.has(String(f.id)))
@@ -1574,6 +1637,7 @@ class TaskService {
 
             task.lastCheckTime = new Date();
             await this.taskRepo.save(task);
+            logTaskEvent(`[任务保存] ${task.resourceName} 已保存到数据库`);
             return saveResults.join('\n');
         } catch (error) {
             return await this._handleTaskFailure(task, error);
