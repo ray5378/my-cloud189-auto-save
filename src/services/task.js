@@ -1496,9 +1496,19 @@ class TaskService {
                 // 添加 CAS 秒传结果到通知
                 if (casSuccessCount > 0) {
                     lines.push(`⚡ CAS秒传成功 ${casSuccessCount} 个:`);
-                    casResults.filter(r => r.success).forEach(r => {
-                        lines.push(`├─ ${r.fileName}`);
-                    });
+                    const successfulCas = casResults.filter(r => r.success);
+                    // 当文件数量超过 6 个时，只显示前 3 个和后 3 个，中间省略
+                    if (successfulCas.length > 6) {
+                        const first3 = successfulCas.slice(0, 3);
+                        const last3 = successfulCas.slice(-3);
+                        first3.forEach(r => lines.push(`├─ ${r.fileName}`));
+                        lines.push(`├─ ... 省略 ${successfulCas.length - 6} 个`);
+                        last3.forEach((r, i) => lines.push(i === last3.length - 1 ? `└─ ${r.fileName}` : `├─ ${r.fileName}`));
+                    } else {
+                        successfulCas.forEach((r, i) => {
+                            lines.push(i === successfulCas.length - 1 ? `└─ ${r.fileName}` : `├─ ${r.fileName}`);
+                        });
+                    }
                 }
                 if (task.totalEpisodes > 0 || existingMediaCount > 0) {
                     lines.push(`🚀 当前进度：${progressEps}${task.totalEpisodes > 0 ? '/' + task.totalEpisodes : ''} 集`);
