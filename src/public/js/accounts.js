@@ -223,6 +223,13 @@ async function editAccount(id) {
 
 // 编辑账号时弹出家庭中转目录选择器
 async function openFamilyFolderSelectorForEdit(accountId, currentFolderId, familyId) {
+    // 初始化浏览路径状态
+    window.editFolderAccountId = accountId;
+    window.editFolderBreadcrumb = [{ id: '', name: '家庭根目录' }];
+    window.editFolderCurrentPath = '';
+    window.editSelectedFolderId = currentFolderId;
+    window.editSelectedFolderName = currentFolderId ? '已配置' : '自动创建';
+
     // 创建目录选择器弹窗
     const modal = document.createElement('div');
     modal.className = 'modal';
@@ -241,6 +248,9 @@ async function openFamilyFolderSelectorForEdit(accountId, currentFolderId, famil
                     </span>
                     <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="clearEditFolderSelection()">清空</button>
                 </div>
+                <div id="editFolderBreadcrumb" style="margin-bottom: 10px; padding: 8px; background: var(--bg-color); border-radius: 6px; font-size: 12px; color: #666;">
+                    📍 家庭根目录
+                </div>
                 <div id="editFolderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
                     <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
                 </div>
@@ -254,16 +264,27 @@ async function openFamilyFolderSelectorForEdit(accountId, currentFolderId, famil
     document.body.appendChild(modal);
     modal.style.display = 'block';
 
-    // 初始化选中值
-    window.editSelectedFolderId = currentFolderId;
-    window.editSelectedFolderName = currentFolderId ? '已配置' : '自动创建';
     await loadEditFamilyFolderTree(accountId, '', currentFolderId);
 }
 
 // 加载编辑模式的家庭目录树
 async function loadEditFamilyFolderTree(accountId, folderId, selectedFolderId) {
     const container = document.getElementById('editFolderTreeContainer');
+    const breadcrumbDiv = document.getElementById('editFolderBreadcrumb');
     if (!container) return;
+
+    // 更新面包屑导航
+    if (breadcrumbDiv && window.editFolderBreadcrumb) {
+        let breadcrumbHtml = '📍 ';
+        window.editFolderBreadcrumb.forEach((item, index) => {
+            if (index === window.editFolderBreadcrumb.length - 1) {
+                breadcrumbHtml += `<span style="color: var(--primary-color);">${item.name}</span>`;
+            } else {
+                breadcrumbHtml += `<span style="cursor: pointer; color: #666;" onclick="navigateToEditFolder(${index})">${item.name}</span> / `;
+            }
+        });
+        breadcrumbDiv.innerHTML = breadcrumbHtml;
+    }
 
     try {
         const response = await fetch(`/api/accounts/${accountId}/family/folders?folderId=${folderId}`);
@@ -275,23 +296,30 @@ async function loadEditFamilyFolderTree(accountId, folderId, selectedFolderId) {
         }
 
         const folders = data.data.folders || [];
-        if (folders.length === 0 && folderId === '') {
-            container.innerHTML = `<div style="text-align: center; padding: 20px; color: #888;">家庭空间无目录，将自动创建</div>`;
-            return;
-        }
+        window.editFolderCurrentPath = folderId;
 
         // 构建目录树
-        let html = folderId === '' ? `
-            <div class="edit-folder-item" data-folder-id="" style="padding: 8px; cursor: pointer; border-radius: 4px; ${!selectedFolderId ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectEditFolder('', '家庭根目录')">
-                📁 家庭根目录（自动创建临时目录）
-            </div>
-        ` : '';
+        let html = '';
+
+        // 根目录选项（仅在根目录时显示）
+        if (folderId === '') {
+            html += `
+                <div class="edit-folder-item" data-folder-id="" style="padding: 10px; cursor: pointer; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; ${!window.editSelectedFolderId ? 'background: var(--primary-color); color: white;' : 'hover:bg'}" onmouseover="this.style.background='${!window.editSelectedFolderId ? 'var(--primary-color)' : 'var(--bg-color)'}'" onmouseout="this.style.background='${!window.editSelectedFolderId ? 'var(--primary-color)' : ''}'" onclick="selectEditFolder('', '家庭根目录')">
+                    <span>📁 家庭根目录（自动创建临时目录）</span>
+                </div>
+            `;
+        }
+
+        if (folders.length === 0 && folderId !== '') {
+            html += `<div style="text-align: center; padding: 10px; color: #888;">当前目录无子目录</div>`;
+        }
 
         folders.forEach(folder => {
-            const isSelected = folder.id === selectedFolderId;
+            const isSelected = folder.id === window.editSelectedFolderId;
             html += `
-                <div class="edit-folder-item" data-folder-id="${folder.id}" style="padding: 8px; cursor: pointer; border-radius: 4px; margin-left: ${folderId ? '15px' : '0'}; ${isSelected ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectEditFolder('${folder.id}', '${folder.name}')">
-                    📁 ${folder.name}
+                <div class="edit-folder-item" data-folder-id="${folder.id}" style="padding: 10px; cursor: pointer; border-radius: 4px; margin-top: 4px; display: flex; justify-content: space-between; align-items: center; ${isSelected ? 'background: var(--primary-color); color: white;' : ''}" onclick="selectEditFolder('${folder.id}', '${folder.name}')">
+                    <span>📁 ${folder.name}</span>
+                    <button class="btn-secondary" style="padding: 2px 8px; font-size: 11px; background: transparent; border: 1px solid ${isSelected ? 'white' : 'var(--border-color)'}; color: ${isSelected ? 'white' : '#666'};" onclick="event.stopPropagation(); enterEditFolder('${folder.id}', '${folder.name}')">进入 →</button>
                 </div>
             `;
         });
@@ -300,6 +328,21 @@ async function loadEditFamilyFolderTree(accountId, folderId, selectedFolderId) {
     } catch (error) {
         container.innerHTML = `<div style="text-align: center; padding: 20px; color: #e74c3c;">加载失败: ${error.message}</div>`;
     }
+}
+
+// 进入子目录
+async function enterEditFolder(folderId, folderName) {
+    // 添加到面包屑
+    window.editFolderBreadcrumb.push({ id: folderId, name: folderName });
+    await loadEditFamilyFolderTree(window.editFolderAccountId, folderId, window.editSelectedFolderId);
+}
+
+// 返回面包屑指定层级
+async function navigateToEditFolder(index) {
+    // 截断面包屑到指定层级
+    window.editFolderBreadcrumb = window.editFolderBreadcrumb.slice(0, index + 1);
+    const targetFolderId = window.editFolderBreadcrumb[index].id;
+    await loadEditFamilyFolderTree(window.editFolderAccountId, targetFolderId, window.editSelectedFolderId);
 }
 
 // 编辑模式下选择目录
