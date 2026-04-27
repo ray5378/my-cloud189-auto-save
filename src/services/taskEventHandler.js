@@ -138,7 +138,17 @@ class TaskEventHandler {
     }
     async _handleAutoRename(taskCompleteEventDto) {
         try {
-            const {task, taskService, cloud189} = taskCompleteEventDto;
+            const {task, taskService, cloud189, taskRepo} = taskCompleteEventDto;
+            // 重新从数据库获取最新的任务对象，确保包含用户手动绑定的 TMDB 信息
+            const freshTask = await taskRepo.findOneBy({ id: task.id });
+            if (freshTask) {
+                // 合并最新字段到当前 task 对象
+                task.manualTmdbBound = freshTask.manualTmdbBound;
+                task.tmdbId = freshTask.tmdbId;
+                task.tmdbTitle = freshTask.tmdbTitle;
+                task.videoType = freshTask.videoType;
+                task.manualSeason = freshTask.manualSeason;
+            }
             const result = await taskService.autoRename(cloud189, task);
             if (result && result.newFiles && result.newFiles.length > 0) {
                 taskCompleteEventDto.fileList = result.newFiles;
