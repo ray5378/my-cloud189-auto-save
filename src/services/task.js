@@ -186,6 +186,85 @@ class TaskService {
         tasks.push(await this.taskRepo.save(task));
     }
 
+    // 提纯影视文件名，移除技术参数和季集信息
+    // 例如: "Gimlet Eyes.2026.S01E01.2160p.SDR.25fps.10-bit.HEVC.AAC 2.0@HiveWeb.mp4" -> "Gimlet Eyes"
+    // 例如: "Throne.of.Seal.S01E198.2160p.mkv" -> "Throne of Seal"
+    // 例如: "The.Matrix.1999.2160p.BluRay.x264.mp4" -> "The Matrix"
+    _extractCleanTitle(fileName) {
+        let name = fileName;
+
+        // 1. 移除文件扩展名
+        name = name.replace(/\.(mkv|mp4|avi|rmvb|wmv|m2ts|ts|flv|mov|iso|mpg|rm)$/i, '');
+
+        // 2. 移除季集信息 (S01E01, S01, E01, 第1集, 第1季 等)
+        name = name.replace(/\.S\d+[-_ ]*E\d+/gi, '');  // S01E01
+        name = name.replace(/\.S\d+/gi, '');            // S01
+        name = name.replace(/\.E[P]?\d+/gi, '');        // E01, EP01
+        name = name.replace(/\.第\s*\d+\s*[集季话]/gi, ''); // 第1集, 第1季, 第1话
+
+        // 3. 移除年份 (单独提取年份，这里移除)
+        // 年份格式: .2026. 或 (2026) 或 【2026】
+        name = name.replace(/\.\d{4}\./g, '.');         // .2026.
+        name = name.replace(/[\[\({【（]\d{4}[\]\)}】）]/g, ''); // (2026)
+
+        // 4. 移除技术参数（常见视频/音频编码格式）
+        const techParams = [
+            // 分辨率
+            '2160p', '1080p', '720p', '480p', '360p', '4K', '8K',
+            // 视频编码
+            'HEVC', 'H\\.265', 'x265', 'AVC', 'H\\.264', 'x264', 'AV1', 'VP9',
+            // 视频质量
+            'SDR', 'HDR', 'HDR10', 'DV', 'DolbyVision', 'Hybrid', 'REMUX', 'BluRay', 'WEB-DL', 'WEBRip',
+            // 音频编码
+            'AAC', 'AC3', 'DTS', 'DTS-HD', 'DTS-MA', 'TrueHD', 'FLAC', 'MP3', 'DDP', 'DD', ' Atmos',
+            // 音频声道
+            '2\\.0', '5\\.1', '7\\.1', '2ch', '6ch', '8ch',
+            // 帧率
+            '23\\.976fps', '24fps', '25fps', '30fps', '60fps', 'fps',
+            // 位深
+            '10-bit', '8-bit', '10bit', '8bit',
+            // 来源/组名
+            'HiveWeb', 'Hive', 'WEB', 'NTB', 'FRDS', 'CMCT', 'ADWeb', 'Bilibili', 'iQIYI', 'Youku',
+            // 其他
+            'SD', 'HD', 'UHD', 'Complete', 'Final', 'OVA', 'SP', 'OAD'
+        ];
+        const techPattern = new RegExp(`\\.(${techParams.join('|')})(\\.|$|\\s|@)`, 'gi');
+        name = name.replace(techPattern, '.');
+
+        // 5. 移除 @xxx 后缀（如 @HiveWeb）
+        name = name.replace(/@[\w.-]+/gi, '');
+
+        // 6. 清理多余点号和空格
+        name = name.replace(/\.\./g, '.');
+        name = name.replace(/\.$/, '');
+        name = name.replace(/^\./, '');
+        name = name.trim();
+
+        // 7. 将点号替换为空格（更符合 TMDB 搜索格式）
+        name = name.replace(/\./g, ' ');
+        name = name.replace(/\s+/g, ' ').trim();
+
+        return name;
+    }
+
+    // 从文件名提取年份
+    // 支持格式: .2026. (2026) 【2026】 或末尾的年份
+    _extractYear(fileName) {
+        // 格式1: .年份. (如 Gimlet Eyes.2026.S01)
+        const dotYearMatch = fileName.match(/\.(20\d{2}|19\d{2})\./i);
+        if (dotYearMatch) return parseInt(dotYearMatch[1]);
+
+        // 格式2: (年份) 【年份】 等括号格式
+        const bracketYearMatch = fileName.match(/[\[\({【（](20\d{2}|19\d{2})[\]\)}】）]/);
+        if (bracketYearMatch) return parseInt(bracketYearMatch[1]);
+
+        // 格式3: 末尾年份（如 繁花 (2023)）
+        const endYearMatch = fileName.match(/[\[\({【（]?(20\d{2}|19\d{2})[\]\)}】）]?\s*$/);
+        if (endYearMatch) return parseInt(endYearMatch[1]);
+
+        return 0;
+    }
+
     async _analyzeResourceInfo(resourcePath, files, type = 'folder', taskDto = null) {
         try {
             if (type == 'folder') {
@@ -197,16 +276,12 @@ class TaskService {
             }
 
             // ====== 针对文件类型优化的重命名 (TMDB 优先 + 本地正则全量匹配) ======
-            let baseName = resourcePath;
-            let year = 0;
-            // 提取基础名称和年份 (例如 "繁花 (2023)" 或 "繁花（2023）")
-            const yearMatch = resourcePath.match(/(.+?)\s*[\[\({【（]?(\d{4})[\]\)}】）]?\s*$/);
-            if (yearMatch) {
-                baseName = yearMatch[1].trim();
-                year = parseInt(yearMatch[2]);
-            } else {
-                baseName = resourcePath.trim();
-            }
+            // 1. 提纯影视名称（移除技术参数）
+            let baseName = this._extractCleanTitle(resourcePath);
+            // 2. 提取年份
+            let year = this._extractYear(resourcePath);
+
+            logTaskEvent(`[AI重命名] 文件名提纯: "${resourcePath}" -> "${baseName}", 年份: ${year || '未知'}`);
 
             // ====== 优先从任务名中提取 TMDB ID（比标题搜索更准确） ======
             // 支持格式: {tmdb-71233}, [tmdbid=71233], tmdb:71233 等
@@ -410,9 +485,10 @@ class TaskService {
                 allMatched = false;
             }
 
-            // 如果全部文件都能被正则快速解析，直接返回构造好的结果！
-            if (allMatched && files.length > 0) {
-                logTaskEvent(`极速版重命名生效: 已全量使用本地正则匹配成功，跳过耗时的AI请求 (${finalName})`);
+            // 如果全部文件都能被正则快速解析，且 TMDB 已匹配成功，直接返回构造好的结果！
+            // 极速重命名只适用于: 手动绑定 TMDB、TMDB ID 提取成功、或 TMDB 搜索匹配成功
+            if (allMatched && files.length > 0 && tmdbParsed) {
+                logTaskEvent(`极速版重命名生效: TMDB已匹配【${tmdbName}】，本地正则全量匹配成功，跳过耗时的AI请求`);
                 // 优先使用用户指定的类型，其次TMDB类型，最后根据文件数量自动判断
                 const finalType = taskDto?.videoType || tmdbType || (localParsedEpisodes.length > 1 ? "tv" : "movie");
                 return {
@@ -425,8 +501,9 @@ class TaskService {
             }
 
             // ======= AI 回退方案 =======
-            // 如果存在无法匹配的文件，使用原本的分块请求给大模型解析（比较耗时）
-            logTaskEvent('本地正则无法完全匹配，回退极速版重命名，尝试使用 AI 对源文件进行大模型解析...');
+            // 如果 TMDB 未匹配成功，或本地正则无法完全匹配，使用 AI 大模型解析
+            const aiReason = !tmdbParsed ? 'TMDB未匹配到影视信息' : '本地正则无法完全匹配季集数';
+            logTaskEvent(`${aiReason}，调用 AI 大模型解析文件名...`);
             const result = await AIService.simpleChatCompletion(resourcePath, files);
             if (!result.success) {
                 // 如果 AI 分析失败且还没找到 TMDB 信息，可以判定完全失败
