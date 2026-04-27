@@ -52,6 +52,14 @@ export class Account {
     // 默认账号
     @Column('boolean', { nullable: true, default: false })
     isDefault!: boolean;
+
+    // 家庭组ID（登录后自动检测填充）
+    @Column('text', { nullable: true, default: '' })
+    familyId!: string;
+
+    // 家庭空间中转目录ID（非必填，默认空表示自动创建临时目录）
+    @Column('text', { nullable: true, default: '' })
+    familyFolderId!: string;
 }
 
 @Entity()

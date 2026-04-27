@@ -1126,7 +1126,9 @@ async function bindTmdbToTasks(tmdbId, videoType, title) {
         });
         const data = await resp.json();
         if (data.success) {
-            // 绑定完成后，立即自动触发一次AI重命名和后台任务执行
+            // 绑定完成后，清除旧的 TMDB 缓存（确保刷新后获取新信息）
+            removeTmdbCache(taskId);
+            // 立即自动触发一次AI重命名和后台任务执行
             await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' });
             loading.hide();
             const successMsg = manualSeason ? `成功绑定！并强制设定为第 ${manualSeason} 季。系统已触发重新更新。` : `成功绑定！系统已触发重新更新。`;

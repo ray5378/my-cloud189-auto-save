@@ -212,9 +212,23 @@ AppDataSource.initialize().then(async () => {
                     res.json({ success: false, error: loginResult.message });
                     return;
                 }
+                // 登录成功后自动获取家庭组信息
+                try {
+                    const familyInfo = await cloud189.getFamilyInfo();
+                    if (familyInfo && familyInfo.familyId) {
+                        account.familyId = String(familyInfo.familyId);
+                        console.log(`[账号] 自动检测家庭组: ${account.username} -> familyId: ${account.familyId}`);
+                    }
+                } catch (e) {
+                    console.log(`[账号] 获取家庭信息失败: ${e.message}`);
+                }
+            }
+            // 支持前端传入的家庭中转目录配置（可选）
+            if (req.body.familyFolderId) {
+                account.familyFolderId = req.body.familyFolderId;
             }
             await accountRepo.save(account);
-            res.json({ success: true, data: null });
+            res.json({ success: true, data: { familyId: account.familyId } });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
@@ -288,6 +302,41 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     })
+
+    // 获取账号的家庭目录树（用于前端选择中转目录）
+    app.get('/api/accounts/:id/family/folders', async (req, res) => {
+        try {
+            const accountId = parseInt(req.params.id);
+            const folderId = req.query.folderId || '';
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+
+            const cloud189 = Cloud189Service.getInstance(account);
+            const familyInfo = await cloud189.getFamilyInfo();
+            if (!familyInfo) throw new Error('该账号无家庭空间');
+
+            const folders = await cloud189.listFamilyFolderNodes(String(familyInfo.familyId), folderId);
+            res.json({ success: true, data: { familyId: String(familyInfo.familyId), folders } });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
+    // 更新账号的家庭中转目录
+    app.put('/api/accounts/:id/family-folder', async (req, res) => {
+        try {
+            const accountId = parseInt(req.params.id);
+            const { familyFolderId } = req.body;
+            const account = await accountRepo.findOneBy({ id: accountId });
+            if (!account) throw new Error('账号不存在');
+            account.familyFolderId = familyFolderId || '';
+            await accountRepo.save(account);
+            res.json({ success: true });
+        } catch (error) {
+            res.json({ success: false, error: error.message });
+        }
+    });
+
     // 任务相关API
     app.get('/api/tasks', async (req, res) => {
         const { status, search } = req.query;
