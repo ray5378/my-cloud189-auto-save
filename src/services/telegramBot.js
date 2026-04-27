@@ -1201,8 +1201,9 @@ class TelegramBotService {
                 responseType: 'json'
             }).json();
             if (result.success) {
-                // 触发执行（后台异步，不等待结果）
-                got(`http://localhost:${port}/api/tasks/${taskId}/execute`, {
+                // 触发重命名（后台异步，不等待结果）
+                // 使用 /rename API 而不是 /execute，避免重复转存文件
+                got(`http://localhost:${port}/api/tasks/${taskId}/rename`, {
                     method: 'POST',
                     headers: { 'x-api-key': apiKey }
                 }).catch(() => {});

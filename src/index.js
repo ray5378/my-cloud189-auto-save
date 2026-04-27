@@ -719,6 +719,54 @@ AppDataSource.initialize().then(async () => {
             res.json({ success: false, error: error.message });
         }
     });
+    // 手动触发重命名（用于 TMDB 绑定后重新重命名）
+    app.post('/api/tasks/:id/rename', async (req, res) => {
+        try {
+            const taskId = parseInt(req.params.id);
+            const task = await taskRepo.findOne({
+                where: { id: taskId },
+                relations: {
+                    account: true
+                },
+                select: {
+                    account: {
+                        username: true,
+                        localStrmPrefix: true,
+                        cloudStrmPrefix: true,
+                        embyPathReplace: true
+                    }
+                }
+            });
+            if (!task) throw new Error('任务不存在');
+
+            const account = task.account;
+            const cloud189 = Cloud189Service.getInstance(account);
+
+            logTaskEvent(`================================`);
+            logTaskEvent(`手动触发重命名: ${task.resourceName}`);
+
+            const result = await taskService.autoRename(cloud189, task);
+            let message = '';
+            if (result && result.newFiles && result.newFiles.length > 0) {
+                message = `✅《${task.resourceName}》重命名完成\n已处理 ${result.newFiles.length} 个文件`;
+                if (result.renameMessages && result.renameMessages.length > 0) {
+                    const details = result.renameMessages.slice(0, 10);
+                    message += `\n${details.join('\n')}`;
+                    if (result.renameMessages.length > 10) {
+                        message += `\n└─ ... 等${result.renameMessages.length}个文件`;
+                    }
+                }
+                messageUtil.sendMessage(message);
+            } else {
+                message = `ℹ️《${task.resourceName}》无需重命名（文件已是正确格式或无文件）`;
+            }
+
+            res.json({ success: true, data: result, message });
+        } catch (error) {
+            logTaskEvent(`手动重命名失败: ${error.message}`);
+            res.json({ success: false, error: error.message });
+        }
+    });
     // 根据任务生成STRM文件
     app.post('/api/tasks/strm', async (req, res) => {
         try {
