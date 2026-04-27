@@ -858,12 +858,37 @@ class TaskService {
 
              // 获取分享文件列表并进行增量转存
              const shareDir = await cloud189.listShareDir(shareId, shareFolderId, shareMode, task.accessCode, isFolder);
+             // 先检查 shareDir 是否存在
+             if (!shareDir) {
+                logTaskEvent("⚠️ 无法获取分享目录，链接可能已失效");
+                task.lastError = '无法获取分享目录，链接可能已失效';
+                task.status = 'failed';
+                await this.taskRepo.save(task);
+                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 无法获取分享目录\n请检查分享链接是否正常`);
+                return '';
+             }
              if(shareDir.res_code == "ShareAuditWaiting") {
                 logTaskEvent("分享链接审核中, 等待下次执行")
                 // 恢复任务状态为 pending，避免卡在 processing
                 task.status = 'pending';
                 await this.taskRepo.save(task);
                 return ''
+             }
+             // 检查其他失效错误码
+             if (shareDir.res_code === 'ShareNotFound' ||
+                 shareDir.res_code === 'ShareExpired' ||
+                 shareDir.res_code === 'ShareDeleted' ||
+                 shareDir.res_code === 'ShareInfoNotFound' ||
+                 shareDir.res_code === 'ShareAuditNotPass' ||
+                 shareDir.res_message?.includes('不存在') ||
+                 shareDir.res_message?.includes('已失效') ||
+                 shareDir.res_message?.includes('审核不通过')) {
+                logTaskEvent(`⚠️ 分享链接已失效: ${shareDir.res_message || shareDir.res_code}`);
+                task.lastError = `分享链接已失效: ${shareDir.res_message || shareDir.res_code}`;
+                task.status = 'failed';
+                await this.taskRepo.save(task);
+                this.messageUtil.sendMessage(`❌ 任务 "${task.resourceName}" 分享链接已失效\n错误: ${shareDir.res_message || shareDir.res_code}\n请更新任务配置中的分享链接`);
+                return '';
              }
              if (!shareDir?.fileListAO?.fileList) {
                 logTaskEvent("获取文件列表失败: " + JSON.stringify(shareDir));
