@@ -1760,8 +1760,8 @@ class TaskService {
         }
 
         // 处理消息和保存结果
-        await this._handleRenameResults(task, message, newFiles);
-        return newFiles;
+        const renameMessages = await this._handleRenameResults(task, message, newFiles);
+        return { newFiles, renameMessages };
     }
 
 
@@ -1780,6 +1780,8 @@ class TaskService {
         }
         // .cas 文件重命名仅记录日志，不推送通知（用户不需要看到内部处理细节）
         message.length > 0 && logTaskEvent(`${task.resourceName}自动重命名完成: \n${message.join('\n')}`)
+        // 返回 message 供通知使用
+        return message;
     }
 
     // 根据AI分析结果生成新文件名
