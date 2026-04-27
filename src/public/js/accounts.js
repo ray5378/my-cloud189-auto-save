@@ -400,19 +400,21 @@ async function updateFamilyFolder(accountId, currentFolderId, familyId) {
         <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
                 <h3>选择家庭中转目录</h3>
+                <button class="close-btn" onclick="closeFamilyFolderModal()">×</button>
             </div>
             <div style="padding: 20px;">
                 <p style="color: #888; font-size: 13px; margin-bottom: 15px;">
-                    💡 选择家庭空间中的目录作为中转目录，留空则自动创建临时目录
+                    💡 选择家庭空间中的目录作为 CAS 秒传中转目录，或使用自动创建的临时目录
                 </p>
+                <div id="currentFolderDisplay" style="margin-bottom: 10px; padding: 10px; background: var(--bg-color); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>
+                        <strong>当前：</strong>
+                        <span id="currentFolderText">${currentFolderId ? '已配置 (' + currentFolderId.slice(-6) + ')' : '自动创建临时目录'}</span>
+                    </span>
+                    <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="clearFamilyFolderSelection(${accountId})">清空</button>
+                </div>
                 <div id="folderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
                     <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
-                </div>
-                <div style="margin-top: 15px;">
-                    <label style="display: flex; align-items: center; gap: 8px;">
-                        <input type="checkbox" id="autoCreateFolder" ${!currentFolderId ? 'checked' : ''}>
-                        <span style="font-size: 13px;">自动创建临时目录（每次任务完成后删除）</span>
-                    </label>
                 </div>
             </div>
             <div class="form-actions" style="padding: 15px 20px; border-top: 1px solid var(--border-color);">
@@ -424,8 +426,37 @@ async function updateFamilyFolder(accountId, currentFolderId, familyId) {
     document.body.appendChild(modal);
     modal.style.display = 'block';
 
-    // 加载家庭目录树
+    // 初始化选中值（默认清空/自动创建）
+    window.selectedFamilyFolderId = '';
+    window.selectedFamilyFolderName = '自动创建';
     await loadFamilyFolderTree(accountId, '', currentFolderId);
+}
+
+// 清空选择（恢复默认自动创建）
+function clearFamilyFolderSelection(accountId) {
+    window.selectedFamilyFolderId = '';
+    window.selectedFamilyFolderName = '自动创建';
+
+    // 更新显示
+    const currentFolderText = document.getElementById('currentFolderText');
+    if (currentFolderText) {
+        currentFolderText.textContent = '自动创建临时目录';
+    }
+
+    // 清除目录树选中状态
+    document.querySelectorAll('.folder-item').forEach(item => {
+        item.style.background = '';
+        item.style.color = '';
+    });
+
+    // 选中根目录项
+    const rootItem = document.querySelector('.folder-item[data-folder-id=""]');
+    if (rootItem) {
+        rootItem.style.background = 'var(--primary-color)';
+        rootItem.style.color = 'white';
+    }
+
+    message.success('已恢复为自动创建临时目录');
 }
 
 // 加载家庭目录树
@@ -483,10 +514,14 @@ function selectFamilyFolder(folderId, folderName) {
         selected.style.color = 'white';
     }
 
-    // 更新checkbox状态
-    const checkbox = document.getElementById('autoCreateFolder');
-    if (checkbox) {
-        checkbox.checked = !folderId;
+    // 更新当前选择显示
+    const currentFolderText = document.getElementById('currentFolderText');
+    if (currentFolderText) {
+        if (folderId) {
+            currentFolderText.textContent = `已选择: ${folderName} (${folderId.slice(-6)})`;
+        } else {
+            currentFolderText.textContent = '自动创建临时目录';
+        }
     }
 
     // 保存选中值
@@ -542,6 +577,7 @@ async function showFamilyFolderSelectorAfterAddAccount(accountId, familyId) {
         <div class="modal-content" style="max-width: 500px;">
             <div class="modal-header">
                 <h3>配置家庭中转目录</h3>
+                <button class="close-btn" onclick="closeFamilyFolderModal()">×</button>
             </div>
             <div style="padding: 20px;">
                 <p style="color: #22c55e; font-size: 13px; margin-bottom: 10px;">
@@ -550,14 +586,15 @@ async function showFamilyFolderSelectorAfterAddAccount(accountId, familyId) {
                 <p style="color: #888; font-size: 13px; margin-bottom: 15px;">
                     💡 选择家庭空间中的目录作为 CAS 秒传中转目录，或使用自动创建的临时目录
                 </p>
+                <div id="currentFolderDisplay" style="margin-bottom: 10px; padding: 10px; background: var(--bg-color); border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>
+                        <strong>当前：</strong>
+                        <span id="currentFolderText">自动创建临时目录</span>
+                    </span>
+                    <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="clearFamilyFolderSelection(${accountId})">清空</button>
+                </div>
                 <div id="folderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
                     <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
-                </div>
-                <div style="margin-top: 15px;">
-                    <label style="display: flex; align-items: center; gap: 8px;">
-                        <input type="checkbox" id="autoCreateFolder" checked>
-                        <span style="font-size: 13px;">自动创建临时目录（推荐，每次任务完成后自动删除）</span>
-                    </label>
                 </div>
             </div>
             <div class="form-actions" style="padding: 15px 20px; border-top: 1px solid var(--border-color);">
@@ -569,8 +606,8 @@ async function showFamilyFolderSelectorAfterAddAccount(accountId, familyId) {
     document.body.appendChild(modal);
     modal.style.display = 'block';
 
-    // 加载家庭目录树，默认选中根目录
+    // 加载家庭目录树，默认选中根目录（自动创建）
     window.selectedFamilyFolderId = '';
-    window.selectedFamilyFolderName = '家庭根目录';
+    window.selectedFamilyFolderName = '自动创建';
     await loadFamilyFolderTree(accountId, '', '');
 }
