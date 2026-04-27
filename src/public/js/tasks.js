@@ -272,7 +272,7 @@ function renderTaskMediaWall(tasks) {
                 </td>
                 <td data-label="信息" class="media-wall-info-cell">
                     <div class="media-wall-topline">
-                        <span class="status-badge status-${task.status}">${formatStatus(task.status)}</span>
+                        <span class="status-badge status-${task.status}">${formatTaskStatus(task)}</span>
                         ${metaLine ? `<span class="media-wall-meta">${metaLine}</span>` : ''}
                         ${task.manualTmdbBound ? `<span class="tmdb-bound-badge" style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;margin-left:6px;">🎬 ${task.tmdbTitle || task.tmdbId}${task.manualSeason ? ' 第' + task.manualSeason + '季' : ''}</span>` : ''}
                     </div>
