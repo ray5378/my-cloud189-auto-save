@@ -221,7 +221,7 @@ async function createAccount() {
     const data = await response.json();
     if (data.success) {
         loading.hide()
-        message.success('成功');
+        message.success('账号添加成功');
         document.getElementById('accountForm').reset();
         if (validateCodeDom) {
             // 移除验证码容器
@@ -230,6 +230,11 @@ async function createAccount() {
         }
         closeAddAccountModal();
         fetchAccounts();
+
+        // 如果账号有家庭空间，弹出家庭中转目录选择器
+        if (data.data?.familyId && data.data?.accountId) {
+            await showFamilyFolderSelectorAfterAddAccount(data.data.accountId, data.data.familyId);
+        }
     } else {
         loading.hide()
         // 如果返回的code是NEED_CAPTCHA, 则展示二维码和输入框, 允许用户输入验证码后重新提交
@@ -525,4 +530,47 @@ async function confirmFamilyFolder(accountId) {
         loading.hide();
         message.warning('操作失败: ' + error.message);
     }
+}
+
+// 添加账号成功后弹出家庭中转目录选择器
+async function showFamilyFolderSelectorAfterAddAccount(accountId, familyId) {
+    // 创建目录选择器弹窗
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.id = 'familyFolderModal';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>配置家庭中转目录</h3>
+            </div>
+            <div style="padding: 20px;">
+                <p style="color: #22c55e; font-size: 13px; margin-bottom: 10px;">
+                    ✅ 检测到家庭空间（ID: ${familyId.slice(-6)}）
+                </p>
+                <p style="color: #888; font-size: 13px; margin-bottom: 15px;">
+                    💡 选择家庭空间中的目录作为 CAS 秒传中转目录，或使用自动创建的临时目录
+                </p>
+                <div id="folderTreeContainer" style="border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; max-height: 300px; overflow-y: auto;">
+                    <div style="text-align: center; padding: 20px; color: #888;">加载中...</div>
+                </div>
+                <div style="margin-top: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" id="autoCreateFolder" checked>
+                        <span style="font-size: 13px;">自动创建临时目录（推荐，每次任务完成后自动删除）</span>
+                    </label>
+                </div>
+            </div>
+            <div class="form-actions" style="padding: 15px 20px; border-top: 1px solid var(--border-color);">
+                <button type="button" class="btn-secondary" onclick="closeFamilyFolderModal()">跳过</button>
+                <button type="button" class="btn-primary" onclick="confirmFamilyFolder(${accountId})">确认</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.style.display = 'block';
+
+    // 加载家庭目录树，默认选中根目录
+    window.selectedFamilyFolderId = '';
+    window.selectedFamilyFolderName = '家庭根目录';
+    await loadFamilyFolderTree(accountId, '', '');
 }

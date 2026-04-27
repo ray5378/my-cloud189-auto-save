@@ -228,7 +228,7 @@ AppDataSource.initialize().then(async () => {
                 account.familyFolderId = req.body.familyFolderId;
             }
             await accountRepo.save(account);
-            res.json({ success: true, data: { familyId: account.familyId } });
+            res.json({ success: true, data: { accountId: account.id, familyId: account.familyId } });
         } catch (error) {
             res.json({ success: false, error: error.message });
         }
