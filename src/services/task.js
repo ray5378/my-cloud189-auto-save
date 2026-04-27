@@ -845,11 +845,11 @@ class TaskService {
             const enableCasRapidUpload = ConfigService.getConfigValue('task.enableCasRapidUpload');
             const enableDeleteCasFile = ConfigService.getConfigValue('task.enableDeleteCasFile');
             const enableCasFamilyTransfer = ConfigService.getConfigValue('task.enableCasFamilyTransfer');
-            const casFamilyFolderIdCfg = ConfigService.getConfigValue('task.casFamilyFolderId') || '';
+            // casFamilyFolderId 已移除，改为账号级配置（Account.familyFolderId）
             const enableDeleteFamilyTempFile = ConfigService.getConfigValue('task.enableDeleteFamilyTempFile');
 
-            // 家庭中转临时目录ID（如果使用根目录，会自动创建临时目录）
-            let casFamilyFolderIdActual = casFamilyFolderIdCfg;
+            // 家庭中转临时目录ID（通过账号级配置或自动创建）
+            let casFamilyFolderIdActual = ''; // 初始为空，由 _getFamilyFolderId 决定
             let casTempFolderCreated = false; // 标记是否创建了临时目录
 
             // 排除 .cas 文件，避免进入常规转存流程
