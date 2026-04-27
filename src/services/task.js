@@ -817,9 +817,11 @@ class TaskService {
                             if (freshShareInfo.res_code === 'ShareNotFound' ||
                                 freshShareInfo.res_code === 'ShareExpired' ||
                                 freshShareInfo.res_code === 'ShareDeleted' ||
+                                freshShareInfo.res_code === 'ShareAuditFailed' ||
                                 freshShareInfo.res_message?.includes('不存在') ||
                                 freshShareInfo.res_message?.includes('已失效') ||
-                                freshShareInfo.res_message?.includes('已过期')) {
+                                freshShareInfo.res_message?.includes('已过期') ||
+                                freshShareInfo.res_message?.includes('审核不通过')) {
                                 logTaskEvent(`⚠️ 分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`);
                                 task.lastError = `分享链接已失效: ${freshShareInfo.res_message || '链接不存在'}`;
                                 task.status = 'failed';
