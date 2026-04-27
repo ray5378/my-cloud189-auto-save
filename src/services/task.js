@@ -762,6 +762,38 @@ class TaskService {
             task.status = 'processing';
             await this.taskRepo.save(task);
 
+            // ====== 从任务名中提取 TMDB ID 并更新到任务对象 ======
+            // 支持 {tmdb-71233} 格式，确保任务封面/简介能正确显示
+            if (!task.tmdbId) {
+                const tmdbIdMatch = task.resourceName.match(/(?:^|[\[{(\s_/])tmdb(?:id)?[-=:_ ](\d+)(?:$|[\]})\s_/])/i);
+                if (tmdbIdMatch) {
+                    const extractedTmdbId = parseInt(tmdbIdMatch[1]);
+                    task.tmdbId = extractedTmdbId;
+                    logTaskEvent(`[任务执行] 从任务名提取到 TMDB ID: ${extractedTmdbId}，已更新到任务对象`);
+                    // 如果未指定 videoType，尝试通过 TMDB API 判断类型
+                    const tmdbApiKey = ConfigService.getConfigValue('tmdb.tmdbApiKey');
+                    if (tmdbApiKey && !task.videoType) {
+                        try {
+                            const tmdbService = new TMDBService();
+                            const tvDetail = await tmdbService.getTVDetails(extractedTmdbId);
+                            if (tvDetail && tvDetail.title) {
+                                task.videoType = 'tv';
+                                task.tmdbTitle = tvDetail.title;
+                            } else {
+                                const movieDetail = await tmdbService.getMovieDetails(extractedTmdbId);
+                                if (movieDetail && movieDetail.title) {
+                                    task.videoType = 'movie';
+                                    task.tmdbTitle = movieDetail.title;
+                                }
+                            }
+                        } catch (e) {
+                            logTaskEvent(`[任务执行] TMDB ID ${extractedTmdbId} 类型检测失败: ${e.message}`);
+                        }
+                    }
+                    await this.taskRepo.save(task);
+                }
+            }
+
             const account = await this.accountRepo.findOneBy({ id: task.accountId });
             if (!account) {
                 logTaskEvent(`账号不存在，accountId: ${task.accountId}`);
@@ -803,6 +835,9 @@ class TaskService {
              const shareDir = await cloud189.listShareDir(shareId, shareFolderId, shareMode, task.accessCode, isFolder);
              if(shareDir.res_code == "ShareAuditWaiting") {
                 logTaskEvent("分享链接审核中, 等待下次执行")
+                // 恢复任务状态为 pending，避免卡在 processing
+                task.status = 'pending';
+                await this.taskRepo.save(task);
                 return ''
              }
              if (!shareDir?.fileListAO?.fileList) {
@@ -845,11 +880,11 @@ class TaskService {
             const enableCasRapidUpload = ConfigService.getConfigValue('task.enableCasRapidUpload');
             const enableDeleteCasFile = ConfigService.getConfigValue('task.enableDeleteCasFile');
             const enableCasFamilyTransfer = ConfigService.getConfigValue('task.enableCasFamilyTransfer');
-            const casFamilyFolderIdCfg = ConfigService.getConfigValue('task.casFamilyFolderId') || '';
+            // casFamilyFolderId 已移除，改为账号级配置（Account.familyFolderId）
             const enableDeleteFamilyTempFile = ConfigService.getConfigValue('task.enableDeleteFamilyTempFile');
 
-            // 家庭中转临时目录ID（如果使用根目录，会自动创建临时目录）
-            let casFamilyFolderIdActual = casFamilyFolderIdCfg;
+            // 家庭中转临时目录ID（通过账号级配置或自动创建）
+            let casFamilyFolderIdActual = ''; // 初始为空，由 _getFamilyFolderId 决定
             let casTempFolderCreated = false; // 标记是否创建了临时目录
 
             // 排除 .cas 文件，避免进入常规转存流程
@@ -1008,23 +1043,21 @@ class TaskService {
                             }
                         }
 
-                        // 家庭目录初始化（仅首次）
+                        // 家庭目录初始化（使用账号级配置）
                         if (enableCasFamilyTransfer && this._casFamilyInfo && !casFamilyFolderIdActual) {
                             const familyId = this._casFamilyInfo.familyId;
                             if (!this._casFamilyRootFolderId) {
                                 this._casFamilyRootFolderId = await familyCloud189.getFamilyRootFolderId(familyId);
                             }
-                            if (!casTempFolderCreated && this._casFamilyRootFolderId) {
-                                const tempFolderName = `CAS临时_${Date.now()}`;
-                                const createResult = await familyCloud189.createFamilyFolder(familyId, tempFolderName, this._casFamilyRootFolderId);
-                                if (createResult.success && createResult.folderId) {
-                                    casFamilyFolderIdActual = createResult.folderId;
-                                    casTempFolderCreated = true;
-                                    logTaskEvent(`[家庭中转] 创建临时目录: ${tempFolderName}, ID: ${casFamilyFolderIdActual}`);
-                                } else {
-                                    casFamilyFolderIdActual = this._casFamilyRootFolderId;
-                                    logTaskEvent(`[家庭中转] 创建临时目录失败，使用家庭根目录`);
-                                }
+                            // 获取中转目录（账号级配置 + 同家庭组继承）
+                            const familyFolderIdResult = await this._getFamilyFolderId(familyAccountForTransfer, familyCloud189, familyId, this._casFamilyRootFolderId);
+                            if (familyFolderIdResult.folderId) {
+                                casFamilyFolderIdActual = familyFolderIdResult.folderId;
+                                casTempFolderCreated = familyFolderIdResult.isTemp;
+                                logTaskEvent(`[家庭中转] 中转目录: ${casFamilyFolderIdActual} (${familyFolderIdResult.source})`);
+                            } else {
+                                casFamilyFolderIdActual = this._casFamilyRootFolderId;
+                                logTaskEvent(`[家庭中转] 使用家庭根目录作为中转目录`);
                             }
                         }
 
@@ -1315,8 +1348,8 @@ class TaskService {
                                     });
                                     logTaskEvent(`[家庭中转] ✅ 批次清理完成，配额已恢复`);
 
-                                    // 等待5秒确保云端清理生效
-                                    await new Promise(resolve => setTimeout(resolve, 5000));
+                                    // 等待2秒确保云端清理生效
+                                    await new Promise(resolve => setTimeout(resolve, 2000));
                                 } catch (err) {
                                     logTaskEvent(`[家庭中转] 批次清理失败: ${err.message}`);
                                 }
@@ -1463,9 +1496,19 @@ class TaskService {
                 // 添加 CAS 秒传结果到通知
                 if (casSuccessCount > 0) {
                     lines.push(`⚡ CAS秒传成功 ${casSuccessCount} 个:`);
-                    casResults.filter(r => r.success).forEach(r => {
-                        lines.push(`├─ ${r.fileName}`);
-                    });
+                    const successfulCas = casResults.filter(r => r.success);
+                    // 当文件数量超过 6 个时，只显示前 3 个和后 3 个，中间省略
+                    if (successfulCas.length > 6) {
+                        const first3 = successfulCas.slice(0, 3);
+                        const last3 = successfulCas.slice(-3);
+                        first3.forEach(r => lines.push(`├─ ${r.fileName}`));
+                        lines.push(`├─ ... 省略 ${successfulCas.length - 6} 个`);
+                        last3.forEach((r, i) => lines.push(i === last3.length - 1 ? `└─ ${r.fileName}` : `├─ ${r.fileName}`));
+                    } else {
+                        successfulCas.forEach((r, i) => {
+                            lines.push(i === successfulCas.length - 1 ? `└─ ${r.fileName}` : `├─ ${r.fileName}`);
+                        });
+                    }
                 }
                 if (task.totalEpisodes > 0 || existingMediaCount > 0) {
                     lines.push(`🚀 当前进度：${progressEps}${task.totalEpisodes > 0 ? '/' + task.totalEpisodes : ''} 集`);
@@ -1504,7 +1547,7 @@ class TaskService {
                 } else {
                     // 2. 首次执行/清缓存后执行，但文件都已存在
                     // 需要正确初始化任务状态
-                    task.status = 'processing';
+                    task.status = 'pending';  // 恢复为 pending，避免卡住
                     task.lastFileUpdateTime = new Date();
                     task.currentEpisodes = existingMediaCount;
                     task.retryCount = 0;
@@ -1515,6 +1558,11 @@ class TaskService {
             if (task.totalEpisodes && task.currentEpisodes >= task.totalEpisodes) {
                 task.status = 'completed';
                 logTaskEvent(`${task.resourceName} 已完结`)
+            }
+
+            // 正常执行完成后，如果状态仍是 processing，恢复为 pending（除非已 completed）
+            if (task.status === 'processing') {
+                task.status = 'pending';
             }
 
             const newEvaluatedIds = unprocessedShareFiles
@@ -1762,8 +1810,8 @@ class TaskService {
         }
 
         // 处理消息和保存结果
-        await this._handleRenameResults(task, message, newFiles);
-        return newFiles;
+        const renameMessages = await this._handleRenameResults(task, message, newFiles);
+        return { newFiles, renameMessages };
     }
 
 
@@ -1782,6 +1830,8 @@ class TaskService {
         }
         // .cas 文件重命名仅记录日志，不推送通知（用户不需要看到内部处理细节）
         message.length > 0 && logTaskEvent(`${task.resourceName}自动重命名完成: \n${message.join('\n')}`)
+        // 返回 message 供通知使用
+        return message;
     }
 
     // 根据AI分析结果生成新文件名
@@ -2349,6 +2399,38 @@ class TaskService {
                 id: accountId
             }
         })
+    }
+
+    // 获取家庭中转目录（账号级配置 + 同家庭组继承）
+    // 返回 { folderId, isTemp, source }
+    async _getFamilyFolderId(account, familyCloud189, familyId, familyRootFolderId) {
+        // 1. 该账号自己配置了目录 → 使用自己的
+        if (account.familyFolderId) {
+            return { folderId: account.familyFolderId, isTemp: false, source: '账号配置' };
+        }
+
+        // 2. 查找同家庭组其他账号的配置（继承）
+        if (account.familyId) {
+            const sameFamilyAccounts = await this.accountRepo.find({
+                where: { familyId: account.familyId }
+            });
+            for (const a of sameFamilyAccounts) {
+                if (a.id !== account.id && a.familyFolderId) {
+                    logTaskEvent(`[家庭中转] 继承账号 ${a.username.replace(/(.{3}).*(.{4})/, '$1****$2')} 的中转目录配置`);
+                    return { folderId: a.familyFolderId, isTemp: false, source: '同家庭组继承' };
+                }
+            }
+        }
+
+        // 3. 都没配置 → 自动创建临时目录
+        const tempFolderName = `CAS临时_${Date.now()}`;
+        const createResult = await familyCloud189.createFamilyFolder(familyId, tempFolderName, familyRootFolderId);
+        if (createResult.success && createResult.folderId) {
+            return { folderId: createResult.folderId, isTemp: true, source: '自动创建临时目录' };
+        }
+
+        // 4. 创建失败 → 使用家庭根目录
+        return { folderId: familyRootFolderId, isTemp: false, source: '家庭根目录（创建失败）' };
     }
 
     // 根据分享链接获取文件目录组合 资源名 资源名/子目录1 资源名/子目录2

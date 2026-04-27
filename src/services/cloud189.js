@@ -660,10 +660,20 @@ class Cloud189Service {
                     folderName: folderName
                 }
             });
+            // request 返回 null 表示请求失败
+            if (!result) {
+                logTaskEvent(`[家庭中转] 创建家庭目录失败: 请求返回 null`);
+                return { success: false, message: '请求失败' };
+            }
             if (result?.res_code !== undefined && result.res_code !== 0) {
-                throw new Error(result.res_message || '创建目录失败');
+                logTaskEvent(`[家庭中转] 创建家庭目录失败: ${result.res_message}`);
+                return { success: false, message: result.res_message || '创建目录失败' };
             }
             const folderId = result?.id || result?.folderId || result?.data?.folderId;
+            if (!folderId) {
+                logTaskEvent(`[家庭中转] 创建家庭目录失败: 未获取到目录ID`);
+                return { success: false, message: '未获取到目录ID' };
+            }
             logTaskEvent(`[家庭中转] 家庭目录创建成功: ${folderName}, ID: ${folderId}`);
             return { success: true, folderId: String(folderId) };
         } catch (error) {
