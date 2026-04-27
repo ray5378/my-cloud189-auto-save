@@ -1603,7 +1603,7 @@ class TaskService {
                         task.status = 'completed';
                     }
                     task.currentEpisodes = existingMediaCount;
-                    logTaskEvent(`${task.resourceName} 没有增量剧集`);
+                    logTaskEvent(`${task.resourceName} 没有增量剧集，当前剧集数: ${existingMediaCount}`);
                 } else {
                     // 2. 首次执行/清缓存后执行，但文件都已存在
                     // 需要正确初始化任务状态
@@ -1622,9 +1622,11 @@ class TaskService {
 
             // 正常执行完成后，恢复为 pending（允许下次执行）
             // 前端会根据 currentEpisodes 显示"追剧中"或"等待中"
-            if (task.status === 'processing' && task.status !== 'completed') {
+            if (task.status === 'processing') {
                 task.status = 'pending';
             }
+
+            logTaskEvent(`[任务状态] ${task.resourceName} 最终状态: ${task.status}, currentEpisodes: ${task.currentEpisodes}`);
 
             const newEvaluatedIds = unprocessedShareFiles
                 .filter(f => !f.isFolder && !failedShareFileIds.has(String(f.id)))
@@ -1635,6 +1637,7 @@ class TaskService {
 
             task.lastCheckTime = new Date();
             await this.taskRepo.save(task);
+            logTaskEvent(`[任务保存] ${task.resourceName} 已保存到数据库`);
             return saveResults.join('\n');
         } catch (error) {
             return await this._handleTaskFailure(task, error);
