@@ -846,15 +846,29 @@ class TaskService {
     // 执行任务
     async processTask(task) {
         // 检查任务状态，防止并发重复执行
+        // 同时检查 processing 状态超时（5分钟），防止异常退出后任务卡住
         if (task.status === 'processing') {
-            logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}]正在执行中，跳过本次触发`);
-            return null;
+            const processingStartTime = task.processingStartTime ? new Date(task.processingStartTime) : null;
+            const now = new Date();
+            const fiveMinutes = 5 * 60 * 1000;
+            // 使用 processingStartTime 进行超时检测
+            if (processingStartTime && (now.getTime() - processingStartTime.getTime() > fiveMinutes)) {
+                logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}] processing 状态超时(>5分钟)，自动恢复为 pending`);
+                task.status = 'pending';
+                task.processingStartTime = null;
+                await this.taskRepo.save(task);
+            } else {
+                logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}]正在执行中，跳过本次触发`);
+                return null;
+            }
         }
 
         let saveResults = [];
         try {
             // 立即将状态更新为 processing，防止其他并发请求重复执行
+            // 同时更新 processingStartTime 用于超时检测
             task.status = 'processing';
+            task.processingStartTime = new Date();
             await this.taskRepo.save(task);
 
             // ====== 从任务名中提取 TMDB ID 并更新到任务对象 ======
@@ -1717,8 +1731,10 @@ class TaskService {
 
             // 正常执行完成后，恢复为 pending（允许下次执行）
             // 前端会根据 currentEpisodes 显示"追剧中"或"等待中"
+            // 同时清除 processingStartTime，标记任务已完成
             if (task.status === 'processing') {
                 task.status = 'pending';
+                task.processingStartTime = null;
             }
 
             logTaskEvent(`[任务状态] ${task.resourceName} 最终状态: ${task.status}, currentEpisodes: ${task.currentEpisodes}`);
@@ -2301,20 +2317,22 @@ class TaskService {
         if (!task.retryCount) {
             task.retryCount = 0;
         }
-        
+
         if (task.retryCount < maxRetries) {
             task.retryCount++;
             task.status = 'pending';
+            task.processingStartTime = null;  // 清除 processingStartTime
             task.lastError = `${error.message} (重试 ${task.retryCount}/${maxRetries})`;
             // 设置下次重试时间
             task.nextRetryTime = new Date(Date.now() + retryInterval * 1000);
             logTaskEvent(`任务将在 ${retryInterval} 秒后重试 (${task.retryCount}/${maxRetries})`);
         } else {
             task.status = 'failed';
+            task.processingStartTime = null;  // 清除 processingStartTime
             task.lastError = `${error.message} (已达到最大重试次数 ${maxRetries})`;
             logTaskEvent(`任务达到最大重试次数 ${maxRetries}，标记为失败`);
         }
-        
+
         await this.taskRepo.save(task);
         return '';
     }

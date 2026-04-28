@@ -98,6 +98,12 @@ export class Task {
     @Column('datetime', { nullable: true})
     lastFileUpdateTime!: Date;
 
+    @Column('datetime', { nullable: true, transformer: {
+        from: (date: Date) => date && new Date(date.getTime() + (8 * 60 * 60 * 1000)),
+        to: (date: Date) => date
+    } })
+    processingStartTime!: Date;
+
     @Column('text', { nullable: true })
     resourceName!: string;
 

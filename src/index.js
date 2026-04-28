@@ -695,12 +695,15 @@ AppDataSource.initialize().then(async () => {
             // 检查任务是否正在执行，防止并发重复执行
             // 但如果任务超过 5 分钟仍为 processing，可能是上次异常退出，强制恢复
             if (task.status === 'processing') {
-                const lastCheckTime = task.lastCheckTime ? new Date(task.lastCheckTime) : null;
+                const processingStartTime = task.processingStartTime ? new Date(task.processingStartTime) : null;
                 const now = new Date();
                 const fiveMinutes = 5 * 60 * 1000;
-                if (lastCheckTime && (now.getTime() - lastCheckTime.getTime() > fiveMinutes)) {
+                // 使用 processingStartTime 进行超时检测（比 lastCheckTime 更准确）
+                // processingStartTime 在任务开始时就更新，lastCheckTime 只在正常完成后才更新
+                if (processingStartTime && (now.getTime() - processingStartTime.getTime() > fiveMinutes)) {
                     logTaskEvent(`任务[${task.resourceName}] processing 状态超时(>5分钟)，自动恢复为 pending`);
                     task.status = 'pending';
+                    task.processingStartTime = null;
                     await taskRepo.save(task);
                 } else {
                     logTaskEvent(`任务[${task.resourceName}/${task.shareFolderName || ''}]正在执行中，跳过本次触发`);

@@ -65,6 +65,22 @@ class SchedulerService {
                     this.removeTaskJob(task.id);
                     return;
                 }
+                // 检查 processing 状态超时（5分钟），防止异常退出后任务卡住
+                if (latestTask.status === 'processing') {
+                    const processingStartTime = latestTask.processingStartTime ? new Date(latestTask.processingStartTime) : null;
+                    const now = new Date();
+                    const fiveMinutes = 5 * 60 * 1000;
+                    if (processingStartTime && (now.getTime() - processingStartTime.getTime() > fiveMinutes)) {
+                        logTaskEvent(`任务[${taskName}] processing 状态超时(>5分钟)，自动恢复为 pending`);
+                        latestTask.status = 'pending';
+                        latestTask.processingStartTime = null;
+                        await taskService.taskRepo.save(latestTask);
+                    } else {
+                        logTaskEvent(`任务[${taskName}]正在执行中，跳过本次定时触发`);
+                        logTaskEvent(`================================`);
+                        return;
+                    }
+                }
                 const result = await taskService.processTask(latestTask);
                 if (result) {
                     this.messageUtil.sendMessage(result)
